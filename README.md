@@ -13,7 +13,7 @@ same everywhere.
 |---|---|---|---|
 | Flutter (Android, iOS and other Flutter targets) | [`flutter/`](flutter/) | Available | `optikpi_inapp` |
 | React Native | `react-native/` | Planned | |
-| Web JS | `js/` | Planned | |
+| Web JS | [`js/`](js/) | Available | `optikpi_inapp` (not published yet) |
 
 ## What's in the repo
 
@@ -23,6 +23,7 @@ same everywhere.
 | [`contract/popup-content.schema.json`](contract/popup-content.schema.json) | JSON Schema of `PopupContent`, the content of one pop-up. |
 | [`contract/fixtures/`](contract/fixtures/) | Shared test data: one sample per layout (`layouts/`), and the malformed content and responses every SDK must read the same way (`content-cases.json`, `fetch-response-cases.json`). Each SDK's tests run them. |
 | [`flutter/`](flutter/) | The Flutter package. |
+| [`js/`](js/) | The web (JavaScript and React overlay) package. |
 
 ## Quick start
 
@@ -60,9 +61,13 @@ await OptikpiInApp.logout();                          // on logout
 
 The five integration steps, all options and the behaviour are in [`flutter/README.md`](flutter/README.md).
 
-### React Native, Web JS
+### Web JS
 
-Planned. They will follow `API.md` and run `contract/fixtures` in their tests.
+See [`js/README.md`](js/README.md).
+
+### React Native
+
+Planned. It will follow `API.md` and run `contract/fixtures` in its tests.
 
 ## Releases
 
