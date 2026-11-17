@@ -276,31 +276,6 @@ function PopupCard({
   const onImage = () => controller.tapImage(active);
   const image = content.image;
 
-  if (content.layout === "fullscreen") {
-    return (
-      <div className="optikpi-inapp optikpi-stage">
-        <OverlayScrim content={content} onOutside={onClose} />
-        <div className="optikpi-fullscreen-panel" style={themeVars(content)}>
-          {image ? (
-            <div className="optikpi-hero">
-              <PopupImageView
-                image={image}
-                tappable={Boolean(image.tapAction)}
-                onTap={onImage}
-                placeholder={content.theme.text}
-              />
-            </div>
-          ) : null}
-          <div className="optikpi-body">
-            <TextBlock content={content} fluid />
-            <Buttons buttons={content.buttons} content={content} onButton={onButton} />
-          </div>
-          <CloseButton content={content} dark onClose={onClose} />
-        </div>
-      </div>
-    );
-  }
-
   if (content.layout === "banner") {
     const top = content.position !== "bottom";
     const iab = content.size === "iab_320x50";

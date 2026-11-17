@@ -118,16 +118,6 @@
     transform: translateX(-50%);
     border-radius: var(--popup-radius);
   }
-
-  .optikpi-fullscreen-panel {
-    position: absolute;
-    inset: 0;
-    overflow: auto;
-  }
-
-  .optikpi-fullscreen-panel .optikpi-hero {
-    height: 52vh;
-  }
 }
 
 @media (max-width: 767px) {
@@ -201,15 +191,5 @@
 
   .optikpi-sheet-panel[data-size="lg"] {
     height: 72vh;
-  }
-
-  .optikpi-fullscreen-panel {
-    position: absolute;
-    inset: 0;
-    overflow: auto;
-  }
-
-  .optikpi-fullscreen-panel .optikpi-hero {
-    height: 52vh;
   }
 }

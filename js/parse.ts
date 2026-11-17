@@ -1,6 +1,5 @@
 export type PopupLayout =
   | "modal"
-  | "fullscreen"
   | "bottomSheet"
   | "banner"
   | "toast"
@@ -83,12 +82,6 @@ type LayoutSpec = {
 const LAYOUTS: Record<PopupLayout, LayoutSpec> = {
   modal: {
     sizes: ["sm", "md", "lg", "iab_300x250"],
-    hasText: true,
-    maxButtons: 2,
-    autoDismiss: false,
-  },
-  fullscreen: {
-    sizes: ["lg"],
     hasText: true,
     maxButtons: 2,
     autoDismiss: false,
