@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from "react";
 import { controller, type ActivePopup } from "./controller";
 import "./overlay.css";
 import {
@@ -486,13 +486,21 @@ function PopupCard({
   );
 }
 
-export default function OptikpiInAppOverlay() {
-  const [active, setActive] = useState<ActivePopup | null>(controller.current);
-  const { width, desktop } = useViewport();
+function subscribeActive(onChange: () => void) {
+  return controller.subscribe(onChange);
+}
 
-  useEffect(() => {
-    return controller.subscribe(() => setActive(controller.current));
-  }, []);
+function currentActive() {
+  return controller.current;
+}
+
+function serverActive(): ActivePopup | null {
+  return null;
+}
+
+export default function OptikpiInAppOverlay() {
+  const active = useSyncExternalStore(subscribeActive, currentActive, serverActive);
+  const { width, desktop } = useViewport();
 
   useEffect(() => {
     if (!active) return;
@@ -524,3 +532,5 @@ export default function OptikpiInAppOverlay() {
 
   return card;
 }
+
+export { OptikpiInAppOverlay };

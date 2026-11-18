@@ -2,8 +2,13 @@ import { inAppLog } from "./log";
 import type { PopupEvent } from "./http";
 
 const SHOWN_KEY = "optikpi_inapp.shown";
-const QUEUE_KEY = "optikpi_inapp.events";
-const TRACKED_KEY = "optikpi_inapp.tracked";
+/** One pending event. The suffix is the dedupe key, so two tabs never share a list. */
+const PENDING_PREFIX = "optikpi_inapp.q.";
+/** One dedupe key. Kept after the event is sent so it is queued only once. */
+const SEEN_PREFIX = "optikpi_inapp.t.";
+/** Earlier builds stored both of those as JSON lists. Read once, then drop. */
+const LEGACY_QUEUE_KEY = "optikpi_inapp.events";
+const LEGACY_TRACKED_KEY = "optikpi_inapp.tracked";
 const MAX_SHOWN = 500;
 const MAX_QUEUED = 500;
 const MAX_TRACKED = 2000;
@@ -89,25 +94,107 @@ function eventDedupeKey(
   return `${workspaceId}|${playerId}|${event.trackingId}|${event.type}`;
 }
 
+function localStorageOrNull(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+function pendingKey(dedupeKey: string): string {
+  return PENDING_PREFIX + encodeURIComponent(dedupeKey);
+}
+
+function seenKey(dedupeKey: string): string {
+  return SEEN_PREFIX + encodeURIComponent(dedupeKey);
+}
+
+function keysWithPrefix(storage: Storage, prefix: string): string[] {
+  const keys: string[] = [];
+  for (let i = 0; i < storage.length; i++) {
+    const key = storage.key(i);
+    if (key != null && key.startsWith(prefix)) keys.push(key);
+  }
+  return keys;
+}
+
+function remember(
+  storage: Storage,
+  key: string,
+  value: string
+): void {
+  if (storage.getItem(key) == null) storage.setItem(key, value);
+}
+
+/**
+ * A JSON list is one read-modify-write. Two tabs can read the same snapshot and the
+ * later setItem drops the other tab's impression or click. Each event is its own key,
+ * so one tab's write cannot replace the other's.
+ */
+function migrateLegacyLists(storage: Storage): void {
+  if (storage.getItem(LEGACY_TRACKED_KEY) != null) {
+    for (const dedupeKey of readList(LEGACY_TRACKED_KEY)) {
+      remember(storage, seenKey(dedupeKey), "1");
+    }
+    storage.removeItem(LEGACY_TRACKED_KEY);
+  }
+  if (storage.getItem(LEGACY_QUEUE_KEY) != null) {
+    for (const raw of readList(LEGACY_QUEUE_KEY)) {
+      const parsed = parseQueued(raw);
+      if (!parsed) continue;
+      const dedupeKey = eventDedupeKey(parsed.workspaceId, parsed.playerId, parsed.event);
+      remember(storage, pendingKey(dedupeKey), raw);
+      remember(storage, seenKey(dedupeKey), parsed.event.at || "1");
+    }
+    storage.removeItem(LEGACY_QUEUE_KEY);
+  }
+  trimOldest(storage, PENDING_PREFIX, MAX_QUEUED, (key) => pendingAt(storage.getItem(key)), "");
+  trimOldest(storage, SEEN_PREFIX, MAX_TRACKED, (key) => storage.getItem(key) ?? "", "");
+}
+
+function pendingAt(raw: string | null): string {
+  return parseQueued(raw ?? "")?.event.at ?? "";
+}
+
+/** Drops the oldest keys past `max`. `keepKey` is the event just written and is left in place. */
+function trimOldest(
+  storage: Storage,
+  prefix: string,
+  max: number,
+  stamp: (key: string) => string,
+  keepKey: string
+): void {
+  const keys = keysWithPrefix(storage, prefix);
+  const extra = keys.length - max;
+  if (extra <= 0) return;
+  const ranked = keys
+    .filter((key) => key !== keepKey)
+    .map((key) => ({ key, at: stamp(key) }))
+    .sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : a.key < b.key ? -1 : 1));
+  for (let i = 0; i < extra && i < ranked.length; i++) {
+    storage.removeItem(ranked[i].key);
+  }
+}
+
 export function enqueueEvent(
   event: PopupEvent,
   workspaceId: string,
   playerId: string
 ): boolean {
+  const storage = localStorageOrNull();
+  if (!storage) return false;
   try {
-    const tracked = readList(TRACKED_KEY);
+    migrateLegacyLists(storage);
     const dedupeKey = eventDedupeKey(workspaceId, playerId, event);
-    if (tracked.includes(dedupeKey)) return false;
-    const queue = readList(QUEUE_KEY);
-    queue.push(JSON.stringify({ workspaceId, playerId, event }));
-    tracked.push(dedupeKey);
-    const nextQueue =
-      queue.length > MAX_QUEUED ? queue.slice(queue.length - MAX_QUEUED) : queue;
-    const nextTracked =
-      tracked.length > MAX_TRACKED ? tracked.slice(tracked.length - MAX_TRACKED) : tracked;
-    if (!writeList(QUEUE_KEY, nextQueue) || !writeList(TRACKED_KEY, nextTracked)) {
-      return false;
-    }
+    const seen = seenKey(dedupeKey);
+    if (storage.getItem(seen) != null) return false;
+    const pending = pendingKey(dedupeKey);
+    storage.setItem(pending, JSON.stringify({ workspaceId, playerId, event }));
+    storage.setItem(seen, event.at);
+    trimOldest(storage, PENDING_PREFIX, MAX_QUEUED, (key) => pendingAt(storage.getItem(key)), pending);
+    trimOldest(storage, SEEN_PREFIX, MAX_TRACKED, (key) => storage.getItem(key) ?? "", seen);
     inAppLog(`queued ${event.type} ${event.trackingId}`);
     return true;
   } catch (error) {
@@ -117,16 +204,34 @@ export function enqueueEvent(
 }
 
 export function queuedFor(workspaceId: string, playerId: string): QueuedEvent[] {
-  return readList(QUEUE_KEY)
-    .map(parseQueued)
-    .filter((item): item is QueuedEvent => item != null)
-    .filter((item) => item.workspaceId === workspaceId && item.playerId === playerId);
+  const storage = localStorageOrNull();
+  if (!storage) return [];
+  try {
+    migrateLegacyLists(storage);
+  } catch (error) {
+    inAppLog(`could not read event queue: ${error}`);
+  }
+  const items: QueuedEvent[] = [];
+  for (const key of keysWithPrefix(storage, PENDING_PREFIX)) {
+    const parsed = parseQueued(storage.getItem(key) ?? "");
+    if (parsed == null) continue;
+    if (parsed.workspaceId !== workspaceId || parsed.playerId !== playerId) continue;
+    items.push(parsed);
+  }
+  items.sort((a, b) => (a.event.at < b.event.at ? -1 : a.event.at > b.event.at ? 1 : 0));
+  return items;
 }
 
 export function removeQueued(raws: string[]) {
+  const storage = localStorageOrNull();
+  if (!storage) return;
   try {
-    const sent = new Set(raws);
-    writeList(QUEUE_KEY, readList(QUEUE_KEY).filter((raw) => !sent.has(raw)));
+    for (const raw of raws) {
+      const parsed = parseQueued(raw);
+      if (!parsed) continue;
+      const dedupeKey = eventDedupeKey(parsed.workspaceId, parsed.playerId, parsed.event);
+      storage.removeItem(pendingKey(dedupeKey));
+    }
   } catch (error) {
     inAppLog(`could not trim event queue: ${error}`);
   }

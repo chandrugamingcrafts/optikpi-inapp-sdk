@@ -5,17 +5,35 @@ the player's waiting pop-ups, draws them over the page, and reports impression, 
 It follows [`API.md`](../API.md). The Flutter SDK is in [`flutter/`](../flutter/).
 
 It is plain TypeScript apart from one React component, `OptikpiInAppOverlay`. Any site can call the
-core API. React is needed only to mount the overlay.
+core API from `optikpi_inapp`. That entry does not load React or CSS. React 18 or newer is needed
+only to mount the overlay, which is a separate entry, `optikpi_inapp/overlay`.
 
 ## Integration
 
-**1. Copy `js/` into your project** (or add it as a package). Import the overlay CSS through your
-bundler, as `overlay.css` is imported by `overlay.tsx`.
+The package name is `optikpi_inapp`. It is not on npm yet. `js/package.json` names it.
+`optikpi_inapp` resolves to `dist/index.js` (types in `dist/index.d.ts`). `optikpi_inapp/overlay`
+resolves to `dist/overlay.js`, which imports React and `dist/overlay.css`. A bundler such as
+Next.js, Vite or webpack loads whichever entry the app imports.
+
+**1. Install this folder as a dependency.** From the app that will show pop-ups:
+
+```json
+{
+  "dependencies": {
+    "optikpi_inapp": "file:../optikpi-inapp-sdk/js"
+  }
+}
+```
+
+The path is relative to the app's `package.json`. Run `npm install`. Copying `js/` into the app
+works the same way only when the copy keeps `package.json` and `dist/` together and the app
+depends on that directory with `file:`. A bare `optikpi_inapp` import does not resolve from a
+copied folder on its own.
 
 **2. Mount the overlay once**, near the root of the site, on every page:
 
 ```tsx
-import { OptikpiInAppOverlay } from "optikpi_inapp";
+import { OptikpiInAppOverlay } from "optikpi_inapp/overlay";
 
 export default function Root({ children }) {
   return (
@@ -61,14 +79,17 @@ Notes:
 
 | File | |
 |---|---|
-| `index.ts` | Public API: `OptikpiInApp` and `OptikpiInAppOverlay`. |
+| `package.json` | Package name `optikpi_inapp`, version, and the `exports` entry. |
+| `index.ts` | Core API: `OptikpiInApp`. No React. |
+| `dist/index.js` | Built core entry. `npm run build` inside `js/` regenerates `dist/` from the TypeScript. |
+| `overlay.tsx` | React overlay. Import it from `optikpi_inapp/overlay`, not from the core entry. |
 | `controller.ts` | Fetch, show, taps, queue and pause logic. |
 | `http.ts` | The two OptiKPI calls. |
 | `parse.ts` | Parses popups and applies the contract's fallbacks. |
 | `rules.ts` | Blocked routes, which popup to show, fetch throttle. |
 | `token.ts` | Reads `sub` and `wid` from the player token, unverified. |
-| `storage.ts` | `localStorage`: shown ids, event queue, dedupe keys. |
-| `overlay.tsx`, `overlay.css` | The React overlay and its layout by screen width. |
+| `storage.ts` | `localStorage`: shown ids, one key per queued event, one key per dedupe. |
+| `overlay.css` | Layout for the overlay. `overlay.tsx` imports it. |
 | `log.ts`, `version.ts` | Debug logging and SDK version. |
 
 See [`CHANGELOG.md`](CHANGELOG.md) for releases.

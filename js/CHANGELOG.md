@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- `package.json` makes `optikpi_inapp` installable from `js/` (`dist/index.js`). Apps depend on it with `file:` so the documented import resolves.
+- Each queued event is stored under its own `localStorage` key, so two tabs can enqueue at the same time without one write dropping the other.
+- `OptikpiInAppOverlay` is exported from `optikpi_inapp/overlay` only. Importing `optikpi_inapp` no longer loads React or the overlay CSS.
+- The overlay reads `controller.current` with `useSyncExternalStore`, so a popup that arrives while the component is mounting is still drawn.
+- JWT payloads are decoded as UTF-8, so a non-ASCII `sub` or `wid` matches a token that JSON-escaped the same characters.
+
 ## 0.1.0
 
 First release of the web SDK. It follows `API.md` the same way the Flutter SDK does.

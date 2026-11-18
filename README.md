@@ -63,7 +63,17 @@ The five integration steps, all options and the behaviour are in [`flutter/READM
 
 ### Web JS
 
-See [`js/README.md`](js/README.md).
+Not on npm yet. Depend on the `js` folder, then import `optikpi_inapp`:
+
+```json
+{
+  "dependencies": {
+    "optikpi_inapp": "file:../optikpi-inapp-sdk/js"
+  }
+}
+```
+
+The path is relative to the app's `package.json`. Mount and `init` steps are in [`js/README.md`](js/README.md).
 
 ### React Native
 
@@ -75,9 +85,9 @@ Each SDK is versioned and tagged on its own, as `{platform}-v{version}`: `flutte
 `react-native-v…` and `js-v…`. Apps pin the tag (`ref:` above). Every SDK has its own `CHANGELOG.md`
 in its folder.
 
-A release means: bump the version in the SDK's manifest (and `flutter/lib/src/version.dart` for
-Flutter), add the `CHANGELOG.md` entry, merge, then tag the merge commit. Nothing is published to
-pub.dev or npm yet. For apps that can't fetch from GitHub, `flutter/tool/make_zip.sh` builds a zip
+A release means: bump the version in the SDK's manifest (`flutter/pubspec.yaml`, or
+`js/package.json` and `js/version.ts` together), add the `CHANGELOG.md` entry, merge, then tag
+the merge commit. Nothing is published to pub.dev or npm yet. For apps that can't fetch from GitHub, `flutter/tool/make_zip.sh` builds a zip
 of the package.
 
 A change to `API.md` or `contract/` affects every SDK. Make it backward compatible (new optional

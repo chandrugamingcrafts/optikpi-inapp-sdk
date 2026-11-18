@@ -2,7 +2,6 @@ import { controller, type InitOptions } from "./controller";
 import { inAppDebugLogging, setInAppDebugLogging } from "./log";
 import type { PopupContent } from "./parse";
 
-export { default as OptikpiInAppOverlay } from "./overlay";
 export type { InitOptions, PopupCustomActionHandler, PopupDeepLinkHandler } from "./controller";
 export { parsePopupContent } from "./parse";
 export type { PopupContent } from "./parse";
