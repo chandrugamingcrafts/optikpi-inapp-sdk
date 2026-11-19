@@ -74,6 +74,8 @@ Not on npm yet. Depend on the `js` folder, then import `optikpi_inapp`:
 ```
 
 The path is relative to the app's `package.json`. Mount and `init` steps are in [`js/README.md`](js/README.md).
+The web SDK draws modal, bottom sheet, banner, toast and image-only. A `fullscreen` popup is rejected
+and is not shown.
 
 ### React Native
 

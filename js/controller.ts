@@ -2,7 +2,7 @@ import { fetchPopups, PopupHttpException, sendEvents, type PopupEvent, type Popu
 import { inAppLog } from "./log.js";
 import type { InAppPopup, PopupAction, PopupContent } from "./parse.js";
 import { FetchThrottle, isRouteBlocked, pickPopupToShow } from "./rules.js";
-import { enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage.js";
+import { claimShown, enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage.js";
 import { readPlayerTokenClaims } from "./token.js";
 
 export type PopupDeepLinkHandler = (link: string) => void;
@@ -391,6 +391,7 @@ export class OptikpiInAppController {
     this.pickAgain = false;
     const visit = this.visit;
     let next: InAppPopup | null = null;
+    let claimed = false;
     try {
       next = pickPopupToShow({
         waiting: session.waiting,
@@ -406,6 +407,24 @@ export class OptikpiInAppController {
           new Promise((resolve) => setTimeout(resolve, IMAGE_WAIT_MS)),
         ]);
       }
+      if (
+        next &&
+        this.session === session &&
+        visit === this.visit &&
+        !this.pickAgain &&
+        !this.shownThisVisit &&
+        !this.current
+      ) {
+        // Claim before setCurrent. didDraw marks the id only after paint, which is
+        // too late: the other tab can pass loadShownIds and draw the same popup.
+        claimed = await claimShown(next.id);
+        if (!claimed) {
+          inAppLog(`skip ${next.id}: another tab claimed it`);
+          session.waiting = session.waiting.filter((popup) => popup.id !== next!.id);
+          next = null;
+          this.pickAgain = true;
+        }
+      }
     } catch (error) {
       inAppLog(`pick failed: ${error}`);
       next = null;
@@ -419,7 +438,7 @@ export class OptikpiInAppController {
     if (visit !== this.visit || this.pickAgain) {
       return this.maybeShow(session);
     }
-    if (!next || this.shownThisVisit || this.current) return;
+    if (!next || !claimed || this.shownThisVisit || this.current) return;
     this.shownThisVisit = true;
     session.waiting = session.waiting.filter((popup) => popup.id !== next!.id);
     inAppLog(`show ${next.id} (${next.content.layout}) on ${this.route}`);

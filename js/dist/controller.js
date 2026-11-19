@@ -1,7 +1,7 @@
 import { fetchPopups, PopupHttpException, sendEvents } from "./http.js";
 import { inAppLog } from "./log.js";
 import { FetchThrottle, isRouteBlocked, pickPopupToShow } from "./rules.js";
-import { enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage.js";
+import { claimShown, enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage.js";
 import { readPlayerTokenClaims } from "./token.js";
 const IMAGE_WAIT_MS = 10000;
 const FLUSH_DELAY_MS = 2000;
@@ -418,6 +418,7 @@ export class OptikpiInAppController {
         this.pickAgain = false;
         const visit = this.visit;
         let next = null;
+        let claimed = false;
         try {
             next = pickPopupToShow({
                 waiting: session.waiting,
@@ -432,6 +433,22 @@ export class OptikpiInAppController {
                     preloadImage(image.url),
                     new Promise((resolve) => setTimeout(resolve, IMAGE_WAIT_MS)),
                 ]);
+            }
+            if (next &&
+                this.session === session &&
+                visit === this.visit &&
+                !this.pickAgain &&
+                !this.shownThisVisit &&
+                !this.current) {
+                // Claim before setCurrent. didDraw marks the id only after paint, which is
+                // too late: the other tab can pass loadShownIds and draw the same popup.
+                claimed = await claimShown(next.id);
+                if (!claimed) {
+                    inAppLog(`skip ${next.id}: another tab claimed it`);
+                    session.waiting = session.waiting.filter((popup) => popup.id !== next.id);
+                    next = null;
+                    this.pickAgain = true;
+                }
             }
         }
         catch (error) {
@@ -449,7 +466,7 @@ export class OptikpiInAppController {
         if (visit !== this.visit || this.pickAgain) {
             return this.maybeShow(session);
         }
-        if (!next || this.shownThisVisit || this.current)
+        if (!next || !claimed || this.shownThisVisit || this.current)
             return;
         this.shownThisVisit = true;
         session.waiting = session.waiting.filter((popup) => popup.id !== next.id);

@@ -4,6 +4,10 @@ The web SDK of [optikpi-inapp-sdk](../README.md): OptiKPI in-app pop-ups for web
 the player's waiting pop-ups, draws them over the page, and reports impression, click and dismiss.
 It follows [`API.md`](../API.md). The Flutter SDK is in [`flutter/`](../flutter/).
 
+The web SDK draws five layouts: modal, bottom sheet, banner, toast and image-only. It does not draw
+`fullscreen`. A popup with that layout is rejected while parsing, so it is not shown and it sends
+no impression, click or dismiss. The Flutter SDK still draws fullscreen.
+
 It is plain TypeScript apart from one React component, `OptikpiInAppOverlay`. Any site can call the
 core API from `optikpi_inapp`. That entry does not load React or CSS. React 18 or newer is needed
 only to mount the overlay, which is a separate entry, `optikpi_inapp/overlay`.

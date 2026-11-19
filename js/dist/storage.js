@@ -11,6 +11,8 @@ const SEEN_PREFIX = "optikpi_inapp.t.";
 const LEGACY_QUEUE_KEY = "optikpi_inapp.events";
 const LEGACY_TRACKED_KEY = "optikpi_inapp.tracked";
 const MAX_SHOWN = 500;
+/** Serializes check-and-set of a shown id so two tabs cannot both claim it. */
+const SHOWN_LOCK = "optikpi_inapp.shown";
 const MAX_QUEUED = 500;
 const MAX_TRACKED = 2000;
 function readList(key) {
@@ -60,21 +62,47 @@ export function loadShownIds() {
     }
     return ids;
 }
+function writeShown(storage, id) {
+    migrateShown(storage);
+    const key = shownKey(id);
+    if (storage.getItem(key) != null)
+        return false;
+    storage.setItem(key, new Date().toISOString());
+    trimOldest(storage, SHOWN_PREFIX, MAX_SHOWN, (item) => storage.getItem(item) ?? "", key);
+    return true;
+}
 export function markShown(id) {
     const storage = localStorageOrNull();
     if (!storage)
         return;
     try {
-        migrateShown(storage);
-        const key = shownKey(id);
-        if (storage.getItem(key) != null)
-            return;
-        storage.setItem(key, new Date().toISOString());
-        trimOldest(storage, SHOWN_PREFIX, MAX_SHOWN, (item) => storage.getItem(item) ?? "", key);
+        writeShown(storage, id);
     }
     catch (error) {
         inAppLog(`could not remember shown id: ${error}`);
     }
+}
+/**
+ * Records [id] before a popup is drawn. False when another tab already claimed it.
+ * A storage failure still returns true, so a quota error does not hide the popup.
+ */
+export function claimShown(id) {
+    const storage = localStorageOrNull();
+    if (!storage || !id)
+        return Promise.resolve(true);
+    const run = () => {
+        try {
+            return writeShown(storage, id);
+        }
+        catch (error) {
+            inAppLog(`could not claim shown id: ${error}`);
+            return true;
+        }
+    };
+    const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
+    if (!locks)
+        return Promise.resolve(run());
+    return locks.request(SHOWN_LOCK, run);
 }
 function parseQueued(raw) {
     try {

@@ -12,13 +12,15 @@
 - Each shown popup id is stored under its own `localStorage` key, so two tabs cannot drop each other's once-per-device record.
 - An image-only card shrinks to the viewport height as well as the width, so the close button stays on screen in a short or landscape window.
 - A modal, bottom sheet, or image-only popup moves focus inside itself, marks the rest of the page inert, and restores focus when it closes.
+- A popup id is claimed across tabs before it is drawn, so two visible tabs do not show the same once-per-device message.
+- `fullscreen` is not drawn. A popup with that layout is rejected while parsing, so it shows nothing and sends no events.
 
 ## 0.1.0
 
 First release of the web SDK. It follows `API.md` the same way the Flutter SDK does.
 - `OptikpiInApp.init` / `setPlayerToken` / `logout` / `didChangeRoute` / `onForeground`, with the same options as Flutter: `onDeepLink`, `onCustomAction`, `blockedRoutes`.
 - Fetches `GET {baseUrl}/v1/inapp/popups` and sends events to `POST {baseUrl}/ingest/popup` with `Authorization: Bearer` and `x-player-token`.
-- Draws all six layouts (modal, fullscreen, bottom sheet, banner, toast, image-only) with `OptikpiInAppOverlay`, a React component. Modals are centered dialogs at 768px and wider, and full-width cards on phones.
+- Draws five layouts (modal, bottom sheet, banner, toast, image-only) with `OptikpiInAppOverlay`, a React component. `fullscreen` is not supported. Modals are centered dialogs at 768px and wider, and full-width cards on phones.
 - Events are queued in `localStorage`, deduplicated per workspace, player, `trackingId` and type, and retried until accepted. Storage failures never block a button's action.
 - Pauses on `401` or `403` until `setPlayerToken`. A token for another player starts that player from nothing.
 - Shown popup ids are remembered per device in `localStorage`.
