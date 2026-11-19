@@ -559,17 +559,24 @@ function PopupCard({
 
   if (content.layout === "toast") {
     const bottom = content.position === "bottomRight";
-    const toastWidth = desktop ? (content.size === "sm" ? 280 : 340) : width - 24;
+    const safeToastWidth =
+      "calc(100% - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px))";
+    const toastWidth = desktop ? (content.size === "sm" ? 280 : 340) : safeToastWidth;
     const showImage = Boolean(image) && content.size === "md";
     return (
       <div
         style={{
           position: "fixed",
-          right: 12,
-          top: bottom ? undefined : desktop ? 12 : 8,
-          bottom: bottom ? 12 : undefined,
+          right: "calc(12px + env(safe-area-inset-right, 0px))",
+          top: bottom
+            ? undefined
+            : `calc(${desktop ? 12 : 8}px + env(safe-area-inset-top, 0px))`,
+          bottom: bottom
+            ? "calc(12px + env(safe-area-inset-bottom, 0px))"
+            : undefined,
           zIndex: 10050,
           width: toastWidth,
+          maxWidth: safeToastWidth,
           background: content.theme.background,
           color: content.theme.text,
           borderRadius: Math.min(content.theme.radius, 12),

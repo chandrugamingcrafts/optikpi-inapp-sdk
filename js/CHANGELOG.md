@@ -20,8 +20,11 @@
 - Secondary button borders and image placeholders apply transparency to the parsed theme color, so `#RGB` and `#RRGGBBAA` stay valid CSS instead of becoming `#fff33` or `#1018288033`.
 - A shown-id claim stays reversible until the overlay reports the popup drawn. Clearing it first, on a blocked route, logout, or another popup, releases the id so a message that never appeared is not stored as shown.
 - A pre-draw shown claim is an expiring lease, separate from the durable shown record. `didDraw` finalizes it, while a reload, crash, or hard navigation before draw leaves only a stale lease that a later page can recover.
+- A live lease is kept distinct from a finalized shown record. The popup remains in the waiting snapshot and selection retries at lease expiry, so an immediate reload does not discard an un-impressed campaign.
+- Overlapping event flush requests are coalesced per session. Only one queue snapshot is sent at a time, followed by a serialized pass for events queued while that request was in flight.
 - Banners and toasts announce their text in a polite live region and leave focus where it is, so a screen reader hears a short-lived toast instead of missing it.
 - Fixed banners honor the top, bottom, left, and right CSS safe-area insets, so their text and controls stay clear of notches, status areas, and home indicators.
+- Top-right and bottom-right toasts include the applicable CSS safe-area offsets and constrain their available width between the left and right insets.
 - `fullscreen` is not drawn. A popup with that layout is rejected while parsing, so it shows nothing and sends no events.
 
 ## 0.1.0

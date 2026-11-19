@@ -104,12 +104,14 @@ type StoredShownClaim = {
 /**
  * - `claimed`: this call wrote a temporary lease. Finalize it after draw, or release it.
  * - `unstored`: nothing could be written (no storage, or a quota error). Show the popup anyway.
- * - `taken`: another tab has a live lease or the id is already finalized as shown.
+ * - `shown`: the id is already finalized as shown.
+ * - `leased`: another page has a live lease; retry when `retryAfterMs` elapses.
  * - `stale`: `stillValid` was false once the lock was held, so nothing was written.
  */
 export type ClaimResult =
   | { status: "claimed"; claim: ShownClaim }
-  | { status: "unstored" | "taken" | "stale" };
+  | { status: "leased"; retryAfterMs: number }
+  | { status: "unstored" | "shown" | "stale" };
 
 function withShownLock<T>(run: () => T): Promise<T> {
   const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
@@ -152,15 +154,18 @@ export function claimShown(id: string, stillValid: () => boolean = () => true): 
     if (!stillValid()) return { status: "stale" };
     try {
       migrateShown(storage);
-      if (storage.getItem(shownKey(id)) != null) return { status: "taken" };
+      if (storage.getItem(shownKey(id)) != null) return { status: "shown" };
       const key = shownClaimKey(id);
       const existing = readShownClaim(storage, id);
-      if (existing && existing.expiresAt > Date.now()) return { status: "taken" };
+      const now = Date.now();
+      if (existing && existing.expiresAt > now) {
+        return { status: "leased", retryAfterMs: existing.expiresAt - now };
+      }
       // Invalid and expired leases are recoverable. This write replaces either one.
       const claim = { id, token: claimToken() };
       storage.setItem(
         key,
-        JSON.stringify({ token: claim.token, expiresAt: Date.now() + SHOWN_CLAIM_LEASE_MS })
+        JSON.stringify({ token: claim.token, expiresAt: now + SHOWN_CLAIM_LEASE_MS })
       );
       return { status: "claimed", claim };
     } catch (error) {

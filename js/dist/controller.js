@@ -69,6 +69,12 @@ export class OptikpiInAppController {
             writable: true,
             value: null
         });
+        Object.defineProperty(this, "claimRetryTimer", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: null
+        });
         Object.defineProperty(this, "flushTimer", {
             enumerable: true,
             configurable: true,
@@ -358,6 +364,8 @@ export class OptikpiInAppController {
             waiting: [],
             fetching: false,
             paused: false,
+            flushing: false,
+            flushAgain: false,
         };
         this.session = session;
         this.setup = setup;
@@ -376,6 +384,10 @@ export class OptikpiInAppController {
         if (this.flushTimer) {
             clearTimeout(this.flushTimer);
             this.flushTimer = null;
+        }
+        if (this.claimRetryTimer) {
+            clearTimeout(this.claimRetryTimer);
+            this.claimRetryTimer = null;
         }
         if (this.current && !this.current.isTest)
             this.setCurrent(null);
@@ -440,6 +452,16 @@ export class OptikpiInAppController {
             return;
         void this.maybeShow(session);
     }
+    retryClaimAtExpiry(session, retryAfterMs) {
+        if (this.claimRetryTimer)
+            clearTimeout(this.claimRetryTimer);
+        // A small cushion avoids firing in the same millisecond that the lease expires.
+        this.claimRetryTimer = setTimeout(() => {
+            this.claimRetryTimer = null;
+            if (this.session === session)
+                this.showMoment();
+        }, Math.max(0, Math.ceil(retryAfterMs)) + 25);
+    }
     async maybeShow(session) {
         if (this.picking) {
             this.pickAgain = true;
@@ -500,11 +522,17 @@ export class OptikpiInAppController {
                 claim = await claimShown(next.id, stillValid);
                 if (claim.status === "claimed")
                     claimed = claim.claim;
-                if (claim.status === "taken") {
-                    inAppLog(`skip ${next.id}: another tab claimed it`);
+                if (claim.status === "shown") {
+                    inAppLog(`skip ${next.id}: already shown`);
                     session.waiting = session.waiting.filter((popup) => popup.id !== next.id);
                     next = null;
                     this.pickAgain = true;
+                }
+                else if (claim.status === "leased") {
+                    inAppLog(`retry ${next.id}: another page holds a temporary claim`);
+                    this.retryClaimAtExpiry(session, claim.retryAfterMs);
+                    // Keep it in waiting. The expiry timer will select it again without a fetch.
+                    next = null;
                 }
             }
         }
@@ -543,6 +571,10 @@ export class OptikpiInAppController {
             this.releaseUndrawn(this.undrawnClaim.id);
         }
         this.undrawnClaim = held;
+        if (this.claimRetryTimer) {
+            clearTimeout(this.claimRetryTimer);
+            this.claimRetryTimer = null;
+        }
         this.shownThisVisit = true;
         session.waiting = session.waiting.filter((popup) => popup.id !== next.id);
         inAppLog(`show ${next.id} (${next.content.layout}) on ${this.route}`);
@@ -608,6 +640,26 @@ export class OptikpiInAppController {
     async flush(session) {
         if (session.paused || !this.inForeground())
             return;
+        if (session.flushing) {
+            session.flushAgain = true;
+            return;
+        }
+        session.flushing = true;
+        try {
+            do {
+                session.flushAgain = false;
+                if (session.paused || !this.inForeground())
+                    return;
+                if (!(await this.flushPass(session)))
+                    return;
+            } while (session.flushAgain);
+        }
+        finally {
+            session.flushing = false;
+        }
+    }
+    /** One queue snapshot. A trigger during this pass sets `flushAgain` for a fresh snapshot. */
+    async flushPass(session) {
         const context = session.context;
         try {
             const items = queuedFor(context.workspaceId, context.playerId);
@@ -621,14 +673,16 @@ export class OptikpiInAppController {
                     if (error instanceof PopupHttpException && error.isAuthFailure) {
                         this.pauseIfCurrent(session, context);
                     }
-                    return;
+                    return false;
                 }
                 removeQueued(batch.map((item) => item.raw));
             }
         }
         catch (error) {
             inAppLog(`flush failed: ${error}`);
+            return false;
         }
+        return true;
     }
 }
 function preloadImage(url) {

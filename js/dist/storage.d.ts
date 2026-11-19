@@ -8,14 +8,18 @@ export type ShownClaim = {
 /**
  * - `claimed`: this call wrote a temporary lease. Finalize it after draw, or release it.
  * - `unstored`: nothing could be written (no storage, or a quota error). Show the popup anyway.
- * - `taken`: another tab has a live lease or the id is already finalized as shown.
+ * - `shown`: the id is already finalized as shown.
+ * - `leased`: another page has a live lease; retry when `retryAfterMs` elapses.
  * - `stale`: `stillValid` was false once the lock was held, so nothing was written.
  */
 export type ClaimResult = {
     status: "claimed";
     claim: ShownClaim;
 } | {
-    status: "unstored" | "taken" | "stale";
+    status: "leased";
+    retryAfterMs: number;
+} | {
+    status: "unstored" | "shown" | "stale";
 };
 /**
  * Leases [id] before a popup is drawn. A lease is separate from the durable shown

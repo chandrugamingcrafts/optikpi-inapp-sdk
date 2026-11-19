@@ -132,14 +132,16 @@ export function claimShown(id, stillValid = () => true) {
         try {
             migrateShown(storage);
             if (storage.getItem(shownKey(id)) != null)
-                return { status: "taken" };
+                return { status: "shown" };
             const key = shownClaimKey(id);
             const existing = readShownClaim(storage, id);
-            if (existing && existing.expiresAt > Date.now())
-                return { status: "taken" };
+            const now = Date.now();
+            if (existing && existing.expiresAt > now) {
+                return { status: "leased", retryAfterMs: existing.expiresAt - now };
+            }
             // Invalid and expired leases are recoverable. This write replaces either one.
             const claim = { id, token: claimToken() };
-            storage.setItem(key, JSON.stringify({ token: claim.token, expiresAt: Date.now() + SHOWN_CLAIM_LEASE_MS }));
+            storage.setItem(key, JSON.stringify({ token: claim.token, expiresAt: now + SHOWN_CLAIM_LEASE_MS }));
             return { status: "claimed", claim };
         }
         catch (error) {

@@ -29,6 +29,7 @@ export declare class OptikpiInAppController {
     private pickAgain;
     /** Lease for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
     private undrawnClaim;
+    private claimRetryTimer;
     private flushTimer;
     private testCount;
     private listeners;
@@ -69,10 +70,13 @@ export declare class OptikpiInAppController {
     private maybeFetch;
     private pauseIfCurrent;
     private showMoment;
+    private retryClaimAtExpiry;
     private maybeShow;
     private perform;
     private track;
     private scheduleFlush;
     private flush;
+    /** One queue snapshot. A trigger during this pass sets `flushAgain` for a fresh snapshot. */
+    private flushPass;
 }
 export declare const controller: OptikpiInAppController;
