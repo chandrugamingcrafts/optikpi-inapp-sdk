@@ -1,6 +1,8 @@
 import { inAppLog } from "./log.js";
 /** One shown popup id. The suffix is the id, so two tabs never share a list. */
 const SHOWN_PREFIX = "optikpi_inapp.s.";
+/** A temporary pre-draw claim. It becomes a shown record only after `didDraw`. */
+const SHOWN_CLAIM_PREFIX = "optikpi_inapp.c.";
 /** Earlier builds stored shown ids as one JSON list. Read once, then drop. */
 const LEGACY_SHOWN_KEY = "optikpi_inapp.shown";
 /** One pending event. The suffix is the dedupe key, so two tabs never share a list. */
@@ -13,6 +15,8 @@ const LEGACY_TRACKED_KEY = "optikpi_inapp.tracked";
 const MAX_SHOWN = 500;
 /** Serializes check-and-set of a shown id so two tabs cannot both claim it. */
 const SHOWN_LOCK = "optikpi_inapp.shown";
+/** Long enough for React to paint; short enough to recover after a terminated page. */
+const SHOWN_CLAIM_LEASE_MS = 60000;
 const MAX_QUEUED = 500;
 const MAX_TRACKED = 2000;
 function readList(key) {
@@ -31,6 +35,9 @@ function readList(key) {
 }
 function shownKey(id) {
     return SHOWN_PREFIX + encodeURIComponent(id);
+}
+function shownClaimKey(id) {
+    return SHOWN_CLAIM_PREFIX + encodeURIComponent(id);
 }
 /**
  * A JSON list is one read-modify-write. Two tabs can read the same snapshot and the
@@ -88,35 +95,88 @@ function withShownLock(run) {
         return Promise.resolve(run());
     return locks.request(SHOWN_LOCK, run);
 }
+function readShownClaim(storage, id) {
+    const raw = storage.getItem(shownClaimKey(id));
+    if (!raw)
+        return null;
+    try {
+        const parsed = JSON.parse(raw);
+        return typeof parsed.token === "string" &&
+            typeof parsed.expiresAt === "number" &&
+            Number.isFinite(parsed.expiresAt)
+            ? { token: parsed.token, expiresAt: parsed.expiresAt }
+            : null;
+    }
+    catch {
+        return null;
+    }
+}
+function claimToken() {
+    if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+        return crypto.randomUUID();
+    }
+    return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
 /**
- * Records [id] before a popup is drawn. Waiting for the lock can take a while, so
- * `stillValid` runs once the lock is held and before anything is written: a route,
- * session or tab change in the meantime must not leave an id marked shown for a
- * popup that never appears.
+ * Leases [id] before a popup is drawn. A lease is separate from the durable shown
+ * record, so a reload or crash before `didDraw` can recover it after expiry.
  */
 export function claimShown(id, stillValid = () => true) {
     const storage = localStorageOrNull();
-    if (!storage || !id)
-        return Promise.resolve(stillValid() ? "unstored" : "stale");
+    if (!storage || !id) {
+        return Promise.resolve({ status: stillValid() ? "unstored" : "stale" });
+    }
     return withShownLock(() => {
         if (!stillValid())
-            return "stale";
+            return { status: "stale" };
         try {
-            return writeShown(storage, id) ? "claimed" : "taken";
+            migrateShown(storage);
+            if (storage.getItem(shownKey(id)) != null)
+                return { status: "taken" };
+            const key = shownClaimKey(id);
+            const existing = readShownClaim(storage, id);
+            if (existing && existing.expiresAt > Date.now())
+                return { status: "taken" };
+            // Invalid and expired leases are recoverable. This write replaces either one.
+            const claim = { id, token: claimToken() };
+            storage.setItem(key, JSON.stringify({ token: claim.token, expiresAt: Date.now() + SHOWN_CLAIM_LEASE_MS }));
+            return { status: "claimed", claim };
         }
         catch (error) {
             inAppLog(`could not claim shown id: ${error}`);
-            return "unstored";
+            return { status: "unstored" };
         }
     });
 }
-/** Takes back a `claimed` id that was never drawn, so a later visit can still show it. */
-export async function releaseShown(id) {
+/** Converts this lease into the durable shown record after the popup is drawn. */
+export async function finalizeShown(claim) {
     const storage = localStorageOrNull();
-    if (!storage || !id)
+    if (!storage || !claim.id)
         return;
     try {
-        await withShownLock(() => storage.removeItem(shownKey(id)));
+        await withShownLock(() => {
+            const stored = readShownClaim(storage, claim.id);
+            if (stored?.token !== claim.token)
+                return;
+            writeShown(storage, claim.id);
+            storage.removeItem(shownClaimKey(claim.id));
+        });
+    }
+    catch (error) {
+        inAppLog(`could not finalize shown id: ${error}`);
+    }
+}
+/** Takes back this lease if the popup was never drawn. A newer owner's lease is untouched. */
+export async function releaseShown(claim) {
+    const storage = localStorageOrNull();
+    if (!storage || !claim.id)
+        return;
+    try {
+        await withShownLock(() => {
+            const stored = readShownClaim(storage, claim.id);
+            if (stored?.token === claim.token)
+                storage.removeItem(shownClaimKey(claim.id));
+        });
     }
     catch (error) {
         inAppLog(`could not release shown id: ${error}`);

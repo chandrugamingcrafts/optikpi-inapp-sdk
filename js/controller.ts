@@ -5,12 +5,14 @@ import { FetchThrottle, isPopupExpired, isRouteBlocked, pickPopupToShow } from "
 import {
   claimShown,
   enqueueEvent,
+  finalizeShown,
   loadShownIds,
   markShown,
   queuedFor,
   releaseShown,
   removeQueued,
   type ClaimResult,
+  type ShownClaim,
 } from "./storage.js";
 import { readPlayerTokenClaims } from "./token.js";
 
@@ -67,8 +69,8 @@ export class OptikpiInAppController {
   private shownThisVisit = false;
   private picking = false;
   private pickAgain = false;
-  /** Claim for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
-  private undrawnClaimId: string | null = null;
+  /** Lease for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
+  private undrawnClaim: ShownClaim | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private testCount = 0;
   private listeners = new Set<() => void>();
@@ -101,7 +103,7 @@ export class OptikpiInAppController {
     if (
       previous &&
       !previous.isTest &&
-      previous.popup.id === this.undrawnClaimId &&
+      previous.popup.id === this.undrawnClaim?.id &&
       value?.popup.id !== previous.popup.id
     ) {
       this.releaseUndrawn(previous.popup.id);
@@ -109,10 +111,11 @@ export class OptikpiInAppController {
   }
 
   private releaseUndrawn(id: string) {
-    if (this.undrawnClaimId !== id) return;
-    this.undrawnClaimId = null;
+    if (this.undrawnClaim?.id !== id) return;
+    const claim = this.undrawnClaim;
+    this.undrawnClaim = null;
     inAppLog(`release ${id}: not drawn`);
-    void releaseShown(id);
+    void releaseShown(claim);
   }
 
   async init(options: InitOptions) {
@@ -262,8 +265,14 @@ export class OptikpiInAppController {
       inAppLog(`test pop-up drawn (${active.popup.content.layout})`);
       return;
     }
-    if (this.undrawnClaimId === active.popup.id) this.undrawnClaimId = null;
-    markShown(active.popup.id);
+    if (this.undrawnClaim?.id === active.popup.id) {
+      const claim = this.undrawnClaim;
+      this.undrawnClaim = null;
+      void finalizeShown(claim);
+    } else {
+      // Storage may have been unavailable when selection ran.
+      markShown(active.popup.id);
+    }
     this.track(active, "impression");
   }
 
@@ -350,7 +359,7 @@ export class OptikpiInAppController {
       this.flushTimer = null;
     }
     if (this.current && !this.current.isTest) this.setCurrent(null);
-    else if (this.undrawnClaimId) this.releaseUndrawn(this.undrawnClaimId);
+    else if (this.undrawnClaim) this.releaseUndrawn(this.undrawnClaim.id);
     if (flush && session) void this.flush(session);
   }
 
@@ -434,13 +443,13 @@ export class OptikpiInAppController {
       !this.shownThisVisit &&
       !this.current &&
       this.inForeground();
-    let claimedId: string | null = null;
+    let claimed: ShownClaim | null = null;
     const giveBack = () => {
-      if (!claimedId) return;
-      const id = claimedId;
-      claimedId = null;
-      inAppLog(`release ${id}: not shown`);
-      void releaseShown(id);
+      if (!claimed) return;
+      const claimToRelease = claimed;
+      claimed = null;
+      inAppLog(`release ${claimToRelease.id}: not shown`);
+      void releaseShown(claimToRelease);
     };
     try {
       next = pickPopupToShow({
@@ -464,11 +473,11 @@ export class OptikpiInAppController {
         this.pickAgain = true;
       }
       if (next && stillValid()) {
-        // Claim before setCurrent. didDraw marks the id only after paint, which is
-        // too late: the other tab can pass loadShownIds and draw the same popup.
+        // Lease before setCurrent. didDraw finalizes the id only after paint, while
+        // the lease stops another tab from drawing the same popup in the meantime.
         claim = await claimShown(next.id, stillValid);
-        if (claim === "claimed") claimedId = next.id;
-        if (claim === "taken") {
+        if (claim.status === "claimed") claimed = claim.claim;
+        if (claim.status === "taken") {
           inAppLog(`skip ${next.id}: another tab claimed it`);
           session.waiting = session.waiting.filter((popup) => popup.id !== next!.id);
           next = null;
@@ -493,7 +502,7 @@ export class OptikpiInAppController {
     }
     if (
       !next ||
-      (claim !== "claimed" && claim !== "unstored") ||
+      (claim?.status !== "claimed" && claim?.status !== "unstored") ||
       this.shownThisVisit ||
       this.current ||
       !this.inForeground()
@@ -504,12 +513,12 @@ export class OptikpiInAppController {
     // Keep the claim until didDraw. A blocked route, logout, or a replacement
     // popup can clear current before the overlay effect runs, and that clear
     // releases an id that never produced an impression.
-    const held = claim === "claimed" ? claimedId : null;
-    claimedId = null;
-    if (this.undrawnClaimId && this.undrawnClaimId !== held) {
-      this.releaseUndrawn(this.undrawnClaimId);
+    const held = claim.status === "claimed" ? claimed : null;
+    claimed = null;
+    if (this.undrawnClaim && this.undrawnClaim.token !== held?.token) {
+      this.releaseUndrawn(this.undrawnClaim.id);
     }
-    this.undrawnClaimId = held;
+    this.undrawnClaim = held;
     this.shownThisVisit = true;
     session.waiting = session.waiting.filter((popup) => popup.id !== next!.id);
     inAppLog(`show ${next.id} (${next.content.layout}) on ${this.route}`);

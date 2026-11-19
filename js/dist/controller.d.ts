@@ -27,8 +27,8 @@ export declare class OptikpiInAppController {
     private shownThisVisit;
     private picking;
     private pickAgain;
-    /** Claim for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
-    private undrawnClaimId;
+    /** Lease for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
+    private undrawnClaim;
     private flushTimer;
     private testCount;
     private listeners;

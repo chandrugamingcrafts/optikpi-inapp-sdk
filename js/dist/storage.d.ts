@@ -1,23 +1,31 @@
 import type { PopupEvent } from "./http.js";
 export declare function loadShownIds(): Set<string>;
 export declare function markShown(id: string): void;
+export type ShownClaim = {
+    id: string;
+    token: string;
+};
 /**
- * - `claimed`: this call wrote the id. Give it back with `releaseShown` if the popup is not drawn.
- * - `unstored`: nothing could be written (no storage, or a quota error). Show the popup anyway;
- *   there is nothing to give back.
- * - `taken`: another tab already claimed the id.
+ * - `claimed`: this call wrote a temporary lease. Finalize it after draw, or release it.
+ * - `unstored`: nothing could be written (no storage, or a quota error). Show the popup anyway.
+ * - `taken`: another tab has a live lease or the id is already finalized as shown.
  * - `stale`: `stillValid` was false once the lock was held, so nothing was written.
  */
-export type ClaimResult = "claimed" | "unstored" | "taken" | "stale";
+export type ClaimResult = {
+    status: "claimed";
+    claim: ShownClaim;
+} | {
+    status: "unstored" | "taken" | "stale";
+};
 /**
- * Records [id] before a popup is drawn. Waiting for the lock can take a while, so
- * `stillValid` runs once the lock is held and before anything is written: a route,
- * session or tab change in the meantime must not leave an id marked shown for a
- * popup that never appears.
+ * Leases [id] before a popup is drawn. A lease is separate from the durable shown
+ * record, so a reload or crash before `didDraw` can recover it after expiry.
  */
 export declare function claimShown(id: string, stillValid?: () => boolean): Promise<ClaimResult>;
-/** Takes back a `claimed` id that was never drawn, so a later visit can still show it. */
-export declare function releaseShown(id: string): Promise<void>;
+/** Converts this lease into the durable shown record after the popup is drawn. */
+export declare function finalizeShown(claim: ShownClaim): Promise<void>;
+/** Takes back this lease if the popup was never drawn. A newer owner's lease is untouched. */
+export declare function releaseShown(claim: ShownClaim): Promise<void>;
 export type QueuedEvent = {
     raw: string;
     workspaceId: string;

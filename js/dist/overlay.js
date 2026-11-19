@@ -298,10 +298,10 @@ function PopupCard({ active, desktop, screenWidth, screenHeight, }) {
         const bannerWidth = iab ? Math.min(320, width) : width;
         return (_jsxs("div", { style: {
                 position: "fixed",
-                left: 0,
-                right: 0,
-                top: top ? 0 : undefined,
-                bottom: top ? undefined : 0,
+                left: "env(safe-area-inset-left, 0px)",
+                right: "env(safe-area-inset-right, 0px)",
+                top: top ? "env(safe-area-inset-top, 0px)" : undefined,
+                bottom: top ? undefined : "env(safe-area-inset-bottom, 0px)",
                 zIndex: 10050,
                 display: "flex",
                 justifyContent: "center",
@@ -309,7 +309,8 @@ function PopupCard({ active, desktop, screenWidth, screenHeight, }) {
             }, children: [_jsx(PoliteStatus, { text: liveMessage(content) }), _jsxs("div", { style: {
                         pointerEvents: "auto",
                         boxSizing: "border-box",
-                        width: bannerWidth,
+                        width: iab ? bannerWidth : "100%",
+                        maxWidth: "100%",
                         height: iab ? bannerWidth * (50 / 320) : undefined,
                         background: content.theme.background,
                         color: content.theme.text,

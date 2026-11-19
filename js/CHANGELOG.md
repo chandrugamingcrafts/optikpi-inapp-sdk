@@ -19,7 +19,9 @@
 - An `iab_320x50` banner uses `border-box`, so its 12px side padding stays inside the 320×50 size instead of widening the card to 344px.
 - Secondary button borders and image placeholders apply transparency to the parsed theme color, so `#RGB` and `#RRGGBBAA` stay valid CSS instead of becoming `#fff33` or `#1018288033`.
 - A shown-id claim stays reversible until the overlay reports the popup drawn. Clearing it first, on a blocked route, logout, or another popup, releases the id so a message that never appeared is not stored as shown.
+- A pre-draw shown claim is an expiring lease, separate from the durable shown record. `didDraw` finalizes it, while a reload, crash, or hard navigation before draw leaves only a stale lease that a later page can recover.
 - Banners and toasts announce their text in a polite live region and leave focus where it is, so a screen reader hears a short-lived toast instead of missing it.
+- Fixed banners honor the top, bottom, left, and right CSS safe-area insets, so their text and controls stay clear of notches, status areas, and home indicators.
 - `fullscreen` is not drawn. A popup with that layout is rejected while parsing, so it shows nothing and sends no events.
 
 ## 0.1.0
