@@ -2,49 +2,12 @@
 
 ## Unreleased
 
-- `package.json` makes `optikpi_inapp` installable from `js/` (`dist/index.js`). Apps depend on it with `file:` so the documented import resolves.
-- Each queued event is stored under its own `localStorage` key, so two tabs can enqueue at the same time without one write dropping the other.
-- `OptikpiInAppOverlay` is exported from `optikpi_inapp/overlay` only. Importing `optikpi_inapp` no longer loads React or the overlay CSS.
-- The overlay reads `controller.current` with `useSyncExternalStore`, so a popup that arrives while the component is mounting is still drawn.
-- JWT payloads are decoded as UTF-8, so a non-ASCII `sub` or `wid` matches a token that JSON-escaped the same characters.
-- Built modules import each other with `.js` extensions, so `import("optikpi_inapp")` loads under Node's native ESM.
-- A hidden tab's skipped fetch, popup selection and event flush run when the tab becomes visible, or the page is restored from the back-forward cache. A popup is not claimed while the tab is hidden. Hosts do not call `onForeground` for that.
-- Each shown popup id is stored under its own `localStorage` key, so two tabs cannot drop each other's once-per-device record.
-- An image-only card shrinks to the viewport height as well as the width, so the close button stays on screen in a short or landscape window.
-- A modal, bottom sheet, or image-only popup moves focus inside itself, marks the rest of the page inert, and restores focus when it closes.
-- A popup id is claimed across tabs before it is drawn, so two visible tabs do not show the same once-per-device message.
-- After an image finishes loading, `expiresAt` is checked again before the popup id is claimed, so a campaign that expired during the wait is not shown.
-- A bottom-sheet image keeps its side margins without extending past the panel, so the sheet does not scroll sideways.
-- The shown-id claim rechecks route, session and tab state once it holds the cross-tab lock, and an id claimed for a popup that is then not drawn is released, so a once-per-device campaign is not lost to a change during the wait.
-- An `iab_320x50` banner uses `border-box`, so its 12px side padding stays inside the 320×50 size instead of widening the card to 344px.
-- Secondary button borders and image placeholders apply transparency to the parsed theme color, so `#RGB` and `#RRGGBBAA` stay valid CSS instead of becoming `#fff33` or `#1018288033`.
-- A shown-id claim stays reversible until the overlay reports the popup drawn. Clearing it first, on a blocked route, logout, or another popup, releases the id so a message that never appeared is not stored as shown.
-- A pre-draw shown claim is an expiring lease, separate from the durable shown record. `didDraw` finalizes it, while a reload, crash, or hard navigation before draw leaves only a stale lease that a later page can recover.
-- A live lease is kept distinct from a finalized shown record. The popup remains in the waiting snapshot and selection retries at lease expiry, so an immediate reload does not discard an un-impressed campaign.
-- Overlapping event flush requests are coalesced per session. Only one queue snapshot is sent at a time, followed by a serialized pass for events queued while that request was in flight.
-- Events fall back to a deduplicated in-memory queue when `localStorage` is denied or full, so impressions, clicks, and dismissals can still be sent during that page session.
-- A coalesced event flush that remains pending when an in-flight POST fails is rescheduled instead of being stranded after its original timer fired.
-- Selection preloads an image only when that layout and size render it, so an unused slow URL cannot delay or expire a toast, bottom sheet, or IAB modal.
-- Mobile bottom-sheet content includes the bottom safe-area inset, keeping its final CTA above the home indicator.
-- Tappable images have an accessible name from their alt text, including gradient-backed images that do not render an `img` element.
-- Popup fetches and event sends abort after 15 seconds, so a stalled gateway cannot permanently leave fetching or flushing in progress.
-- Shown ids fall back to an in-memory set when `localStorage` is denied or full, preventing the same popup from appearing again during that page session.
-- Parsed popup content carries valid campaign `delivery` metadata (`availableFor`, `customEndsAt`, and `timeZone`) for shared-contract parity.
-- An impression and its auto-dismiss timer wait until the page is visible, so backgrounding the tab after selection does not finalize a popup nobody saw.
-- If both Web Locks and IndexedDB locking fail, popup claims and event flushes still run instead of rejecting the work.
-- Accepted theme colors expand `#RGB` and are returned as uppercase `#RRGGBB` or `#RRGGBBAA`.
-- A pending shown lease is renewed until draw, and a draw is accepted only when this page still owns that lease.
-- Releasing an undrawn popup puts it back into the waiting list, so a blocked route does not lose the campaign until the next fetch.
-- Popup expiry is checked again after the shown-id lock is acquired, and a claim made for an expired popup is released.
-- Custom actions keep `customData` as key/value pairs. The custom-action callback still receives a record.
-- URL actions resolve only to `http:` or `https:` before opening, rejecting active-script and other unapproved schemes.
-- `logout()` waits for the final serialized event flush attempt, so an awaited logout does not return while its POST is still in flight.
-- Cross-tab shown claims and event flushes use Web Locks or an IndexedDB lease fallback, preserving serialization where `navigator.locks` is unavailable.
-- Non-tappable gradient images expose their meaningful alt text with image semantics.
-- Banners and toasts announce their text in a polite live region and leave focus where it is, so a screen reader hears a short-lived toast instead of missing it.
-- Fixed banners honor the top, bottom, left, and right CSS safe-area insets, so their text and controls stay clear of notches, status areas, and home indicators.
-- Top-right and bottom-right toasts include the applicable CSS safe-area offsets and constrain their available width between the left and right insets.
-- `fullscreen` is not drawn. A popup with that layout is rejected while parsing, so it shows nothing and sends no events.
+- `optikpi_inapp` installs from `js/` and loads under Node's native ESM. The overlay and React stay on `optikpi_inapp/overlay`.
+- Draws five layouts. `fullscreen` is rejected while parsing.
+- Shown popups and queued events are stored per id, with a temporary shown lease that becomes durable only after a visible draw.
+- A hidden tab does not fetch, select, claim, or record an impression. That work resumes when the tab is visible.
+- Event flushes are serialized in the page and across tabs. `logout()` waits for the final attempt. Fetches and sends abort after 15 seconds.
+- Banners, toasts, and bottom sheets stay inside the mobile safe area. Theme colors and custom-action data follow the shared content contract.
 
 ## 0.1.0
 

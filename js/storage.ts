@@ -221,7 +221,6 @@ async function withCrossTabLock<T>(name: string, run: () => T | Promise<T>): Pro
   const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
   if (locks) {
     try {
-      // The Web Locks typings do not apply Awaited<T>, but the returned promise does.
       return await (locks.request(name, run) as unknown as Promise<T>);
     } catch (error) {
       inAppLog(`web lock failed: ${error}`);
@@ -230,8 +229,6 @@ async function withCrossTabLock<T>(name: string, run: () => T | Promise<T>): Pro
   try {
     return await withIndexedDbLock(name, run);
   } catch (error) {
-    // A restricted sandbox can offer neither lock. The work still has to run:
-    // a failed claim reports `unstored`, and queued analytics can still be sent.
     inAppLog(`cross-tab lock unavailable: ${error}`);
     return run();
   }

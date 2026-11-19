@@ -301,8 +301,6 @@ export class OptikpiInAppController {
             inAppLog(`hide ${active.popup.id}: ${route} is blocked`);
             this.setCurrent(null);
         }
-        // The lease removal is asynchronous. Selecting immediately can observe the
-        // lease this route change just released and postpone the popup for its TTL.
         const released = this.pendingRelease;
         void released.then(() => {
             if (this.route !== route)
@@ -550,7 +548,6 @@ export class OptikpiInAppController {
     retryClaimAtExpiry(session, retryAfterMs) {
         if (this.claimRetryTimer)
             clearTimeout(this.claimRetryTimer);
-        // A small cushion avoids firing in the same millisecond that the lease expires.
         this.claimRetryTimer = setTimeout(() => {
             this.claimRetryTimer = null;
             if (this.session === session)
@@ -562,8 +559,6 @@ export class OptikpiInAppController {
             this.pickAgain = true;
             return;
         }
-        // A fetch or route change can land while the tab is hidden. Claiming then
-        // would spend the once-per-device popup on a message nobody saw.
         if (!this.inForeground())
             return;
         if (this.shownThisVisit || this.current)
@@ -612,8 +607,6 @@ export class OptikpiInAppController {
                 this.pickAgain = true;
             }
             if (next && stillValid()) {
-                // Lease before setCurrent. didDraw finalizes the id only after paint, while
-                // the lease stops another tab from drawing the same popup in the meantime.
                 const selected = next;
                 claim = await claimShown(selected.id, stillValid);
                 if (isPopupExpired(selected, new Date())) {
@@ -636,7 +629,6 @@ export class OptikpiInAppController {
                 else if (claim.status === "leased") {
                     inAppLog(`retry ${selected.id}: another page holds a temporary claim`);
                     this.retryClaimAtExpiry(session, claim.retryAfterMs);
-                    // Keep it in waiting. The expiry timer will select it again without a fetch.
                     next = null;
                 }
             }
@@ -667,9 +659,6 @@ export class OptikpiInAppController {
             giveBack();
             return;
         }
-        // Keep the claim until didDraw. A blocked route, logout, or a replacement
-        // popup can clear current before the overlay effect runs, and that clear
-        // releases an id that never produced an impression.
         const held = claim.status === "claimed" ? claimed : null;
         claimed = null;
         if (this.undrawnClaim && this.undrawnClaim.token !== held?.token) {
@@ -775,8 +764,6 @@ export class OptikpiInAppController {
             session.flushAgain = false;
             session.flushing = false;
             session.flushPromise = null;
-            // The coalescing timer has already fired. Preserve that request after a
-            // failed in-flight pass by scheduling another attempt.
             if (retry && this.session === session)
                 this.scheduleFlush();
         }

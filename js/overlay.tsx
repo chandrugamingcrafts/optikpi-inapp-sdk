@@ -314,10 +314,6 @@ const POLITE_LIVE_STYLE: CSSProperties = {
   pointerEvents: "none",
 };
 
-/**
- * A live region added with its text already set is often skipped. The region is
- * mounted empty, then filled, so the change is announced without moving focus.
- */
 function PoliteStatus({ text }: { text: string }) {
   const [message, setMessage] = useState("");
   useEffect(() => {
