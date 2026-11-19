@@ -15,6 +15,11 @@ const LEGACY_TRACKED_KEY = "optikpi_inapp.tracked";
 const MAX_SHOWN = 500;
 /** Serializes check-and-set of a shown id so two tabs cannot both claim it. */
 const SHOWN_LOCK = "optikpi_inapp.shown";
+const EVENT_FLUSH_LOCK_PREFIX = "optikpi_inapp.flush.";
+const LOCK_DB_NAME = "optikpi_inapp_locks";
+const LOCK_STORE = "locks";
+const LOCK_LEASE_MS = 30000;
+const LOCK_RENEW_MS = 10000;
 /** Long enough for React to paint; short enough to recover after a terminated page. */
 const SHOWN_CLAIM_LEASE_MS = 60000;
 const MAX_QUEUED = 500;
@@ -23,6 +28,7 @@ const MAX_TRACKED = 2000;
 const memoryPending = new Map();
 const memorySeen = new Map();
 const memoryShown = new Map();
+let lockDbPromise = null;
 function readList(key) {
     if (typeof window === "undefined")
         return [];
@@ -100,11 +106,95 @@ export function markShown(id) {
         inAppLog(`could not remember shown id: ${error}`);
     }
 }
-function withShownLock(run) {
+function openLockDb() {
+    if (lockDbPromise)
+        return lockDbPromise;
+    if (typeof indexedDB === "undefined") {
+        return Promise.reject(new Error("cross-tab locking is unavailable"));
+    }
+    lockDbPromise = new Promise((resolve, reject) => {
+        const request = indexedDB.open(LOCK_DB_NAME, 1);
+        request.onupgradeneeded = () => {
+            if (!request.result.objectStoreNames.contains(LOCK_STORE)) {
+                request.result.createObjectStore(LOCK_STORE);
+            }
+        };
+        request.onsuccess = () => {
+            request.result.onversionchange = () => request.result.close();
+            resolve(request.result);
+        };
+        request.onerror = () => reject(request.error ?? new Error("could not open lock database"));
+        request.onblocked = () => reject(new Error("lock database upgrade was blocked"));
+    });
+    lockDbPromise.catch(() => {
+        lockDbPromise = null;
+    });
+    return lockDbPromise;
+}
+async function changeFallbackLock(name, owner, operation) {
+    const db = await openLockDb();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(LOCK_STORE, "readwrite");
+        const store = transaction.objectStore(LOCK_STORE);
+        const request = store.get(name);
+        let changed = false;
+        request.onsuccess = () => {
+            const current = request.result;
+            const owned = current?.owner === owner;
+            if (operation === "acquire" && (!current || current.expiresAt <= Date.now() || owned)) {
+                store.put({ owner, expiresAt: Date.now() + LOCK_LEASE_MS }, name);
+                changed = true;
+            }
+            else if (operation === "renew" && owned) {
+                store.put({ owner, expiresAt: Date.now() + LOCK_LEASE_MS }, name);
+                changed = true;
+            }
+            else if (operation === "release" && owned) {
+                store.delete(name);
+                changed = true;
+            }
+        };
+        transaction.oncomplete = () => resolve(changed);
+        transaction.onerror = () => reject(transaction.error ?? new Error(`could not ${operation} cross-tab lock`));
+        transaction.onabort = () => reject(transaction.error ?? new Error(`could not ${operation} cross-tab lock`));
+    });
+}
+function waitForLockRetry() {
+    return new Promise((resolve) => setTimeout(resolve, 50));
+}
+async function withIndexedDbLock(name, run) {
+    const owner = claimToken();
+    while (!(await changeFallbackLock(name, owner, "acquire"))) {
+        await waitForLockRetry();
+    }
+    const heartbeat = setInterval(() => {
+        void changeFallbackLock(name, owner, "renew").catch((error) => {
+            inAppLog(`could not renew cross-tab lock: ${error}`);
+        });
+    }, LOCK_RENEW_MS);
+    try {
+        return await run();
+    }
+    finally {
+        clearInterval(heartbeat);
+        await changeFallbackLock(name, owner, "release").catch((error) => {
+            inAppLog(`could not release cross-tab lock: ${error}`);
+        });
+    }
+}
+function withCrossTabLock(name, run) {
     const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
-    if (!locks)
-        return Promise.resolve(run());
-    return locks.request(SHOWN_LOCK, run);
+    // The Web Locks typings do not apply Awaited<T>, but the returned promise does.
+    if (locks)
+        return locks.request(name, run);
+    return withIndexedDbLock(name, run);
+}
+function withShownLock(run) {
+    return withCrossTabLock(SHOWN_LOCK, run);
+}
+export function withEventFlushLock(workspaceId, playerId, run) {
+    const scope = encodeURIComponent(`${workspaceId}|${playerId}`);
+    return withCrossTabLock(`${EVENT_FLUSH_LOCK_PREFIX}${scope}`, run);
 }
 function readShownClaim(storage, id) {
     const raw = storage.getItem(shownClaimKey(id));

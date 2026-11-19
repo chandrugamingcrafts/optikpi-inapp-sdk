@@ -82,7 +82,8 @@ function CloseButton({ content, dark, onClose, inset, }) {
             }, children: "\u00D7" }) }));
 }
 function PopupImageView({ image, tappable, onTap, placeholder, radius, }) {
-    const body = isGradientUrl(image.url) ? (_jsx("div", { style: {
+    const alt = image.alt?.trim();
+    const body = isGradientUrl(image.url) ? (_jsx("div", { role: !tappable && alt ? "img" : undefined, "aria-label": !tappable ? alt : undefined, style: {
             width: "100%",
             height: "100%",
             background: `linear-gradient(135deg, ${gradientStops(image.url).join(", ")})`,
@@ -92,7 +93,7 @@ function PopupImageView({ image, tappable, onTap, placeholder, radius, }) {
     const clipped = (_jsx("div", { style: { width: "100%", height: "100%", overflow: "hidden", borderRadius: radius }, children: body }));
     if (!tappable)
         return clipped;
-    return (_jsx("button", { type: "button", onClick: onTap, "aria-label": image.alt?.trim() || "Image", style: {
+    return (_jsx("button", { type: "button", onClick: onTap, "aria-label": alt || "Image", style: {
             padding: 0,
             border: "none",
             background: "transparent",

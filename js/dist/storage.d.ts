@@ -21,6 +21,7 @@ export type ClaimResult = {
 } | {
     status: "unstored" | "shown" | "stale";
 };
+export declare function withEventFlushLock<T>(workspaceId: string, playerId: string, run: () => T | Promise<T>): Promise<T>;
 /**
  * Leases [id] before a popup is drawn. A lease is separate from the durable shown
  * record, so a reload or crash before `didDraw` can recover it after expiry.

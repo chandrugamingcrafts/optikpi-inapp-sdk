@@ -11,6 +11,7 @@ import {
   queuedFor,
   releaseShown,
   removeQueued,
+  withEventFlushLock,
   type ClaimResult,
   type ShownClaim,
 } from "./storage.js";
@@ -46,6 +47,7 @@ type Session = {
   paused: boolean;
   flushing: boolean;
   flushAgain: boolean;
+  flushPromise: Promise<void> | null;
 };
 
 export type InitOptions = {
@@ -73,6 +75,15 @@ function rendersPopupImage(content: PopupContent): boolean {
     case "banner":
     case "imageOnly":
       return true;
+  }
+}
+
+function safeWebUrl(value: string): string | null {
+  try {
+    const url = new URL(value, window.location.href);
+    return url.protocol === "http:" || url.protocol === "https:" ? url.href : null;
+  } catch {
+    return null;
   }
 }
 
@@ -184,9 +195,10 @@ export class OptikpiInAppController {
 
   async logout() {
     inAppLog("logout");
-    this.endSession(!(this.session?.paused ?? false));
+    const finalFlush = this.endSession(!(this.session?.paused ?? false));
     this.setup = null;
     this.unbindLifecycle();
+    await finalFlush;
   }
 
   didChangeRoute(route: string | null) {
@@ -359,6 +371,7 @@ export class OptikpiInAppController {
       paused: false,
       flushing: false,
       flushAgain: false,
+      flushPromise: null,
     };
     this.session = session;
     this.setup = setup;
@@ -371,7 +384,7 @@ export class OptikpiInAppController {
     this.fetchMoment();
   }
 
-  private endSession(flush: boolean) {
+  private endSession(flush: boolean): Promise<void> {
     const session = this.session;
     this.session = null;
     if (this.flushTimer) {
@@ -384,7 +397,7 @@ export class OptikpiInAppController {
     }
     if (this.current && !this.current.isTest) this.setCurrent(null);
     else if (this.undrawnClaim) this.releaseUndrawn(this.undrawnClaim.id);
-    if (flush && session) void this.flush(session);
+    return flush && session ? this.flush(session) : Promise.resolve();
   }
 
   private fetchMoment() {
@@ -585,10 +598,15 @@ export class OptikpiInAppController {
         return;
       case "url": {
         if (!action.value) return;
+        const url = safeWebUrl(action.value);
+        if (!url) {
+          inAppLog(`blocked unsafe URL action: ${action.value}`);
+          return;
+        }
         try {
-          window.open(action.value, "_blank", "noopener,noreferrer");
+          window.open(url, "_blank", "noopener,noreferrer");
         } catch (error) {
-          inAppLog(`could not open ${action.value}: ${error}`);
+          inAppLog(`could not open ${url}: ${error}`);
         }
       }
     }
@@ -620,13 +638,19 @@ export class OptikpiInAppController {
     }, FLUSH_DELAY_MS);
   }
 
-  private async flush(session: Session) {
-    if (session.paused || !this.inForeground()) return;
+  private flush(session: Session): Promise<void> {
+    if (session.paused || !this.inForeground()) return Promise.resolve();
     if (session.flushing) {
       session.flushAgain = true;
-      return;
+      return session.flushPromise ?? Promise.resolve();
     }
     session.flushing = true;
+    const promise = this.runFlush(session);
+    session.flushPromise = promise;
+    return promise;
+  }
+
+  private async runFlush(session: Session): Promise<void> {
     try {
       do {
         session.flushAgain = false;
@@ -637,6 +661,7 @@ export class OptikpiInAppController {
       const retry = session.flushAgain;
       session.flushAgain = false;
       session.flushing = false;
+      session.flushPromise = null;
       // The coalescing timer has already fired. Preserve that request after a
       // failed in-flight pass by scheduling another attempt.
       if (retry && this.session === session) this.scheduleFlush();
@@ -647,28 +672,34 @@ export class OptikpiInAppController {
   private async flushPass(session: Session): Promise<boolean> {
     const context = session.context;
     try {
-      const items = queuedFor(context.workspaceId, context.playerId);
-      for (let start = 0; start < items.length; start += BATCH_SIZE) {
-        const batch = items.slice(start, start + BATCH_SIZE);
-        try {
-          await sendEvents(
-            context,
-            batch.map((item) => item.event)
-          );
-        } catch (error) {
-          inAppLog(`event send failed, will retry: ${error}`);
-          if (error instanceof PopupHttpException && error.isAuthFailure) {
-            this.pauseIfCurrent(session, context);
+      return await withEventFlushLock(
+        context.workspaceId,
+        context.playerId,
+        async () => {
+          const items = queuedFor(context.workspaceId, context.playerId);
+          for (let start = 0; start < items.length; start += BATCH_SIZE) {
+            const batch = items.slice(start, start + BATCH_SIZE);
+            try {
+              await sendEvents(
+                context,
+                batch.map((item) => item.event)
+              );
+            } catch (error) {
+              inAppLog(`event send failed, will retry: ${error}`);
+              if (error instanceof PopupHttpException && error.isAuthFailure) {
+                this.pauseIfCurrent(session, context);
+              }
+              return false;
+            }
+            removeQueued(batch.map((item) => item.raw));
           }
-          return false;
+          return true;
         }
-        removeQueued(batch.map((item) => item.raw));
-      }
+      );
     } catch (error) {
       inAppLog(`flush failed: ${error}`);
       return false;
     }
-    return true;
   }
 }
 

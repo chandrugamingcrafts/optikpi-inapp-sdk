@@ -147,8 +147,11 @@ function PopupImageView({
   placeholder: string;
   radius?: number;
 }) {
+  const alt = image.alt?.trim();
   const body = isGradientUrl(image.url) ? (
     <div
+      role={!tappable && alt ? "img" : undefined}
+      aria-label={!tappable ? alt : undefined}
       style={{
         width: "100%",
         height: "100%",
@@ -173,7 +176,7 @@ function PopupImageView({
     <button
       type="button"
       onClick={onTap}
-      aria-label={image.alt?.trim() || "Image"}
+      aria-label={alt || "Image"}
       style={{
         padding: 0,
         border: "none",

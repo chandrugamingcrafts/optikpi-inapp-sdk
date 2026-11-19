@@ -76,6 +76,7 @@ export declare class OptikpiInAppController {
     private track;
     private scheduleFlush;
     private flush;
+    private runFlush;
     /** One queue snapshot. A trigger during this pass sets `flushAgain` for a fresh snapshot. */
     private flushPass;
 }
