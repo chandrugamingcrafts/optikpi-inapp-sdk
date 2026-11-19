@@ -2,6 +2,8 @@ import { inAppLog } from "./log.js";
 import { parseFetchResult, type PopupFetchResult } from "./parse.js";
 import { SDK_VERSION_HEADER } from "./version.js";
 
+const HTTP_TIMEOUT_MS = 15_000;
+
 export type PopupRequestContext = {
   baseUrl: string;
   workspaceId: string;
@@ -49,15 +51,28 @@ function uri(context: PopupRequestContext, path: string) {
   return `${base}${path}`;
 }
 
+async function withHttpTimeout<T>(request: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
+  try {
+    return await request(controller.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function fetchPopups(context: PopupRequestContext): Promise<PopupFetchResult> {
   const path = "/v1/inapp/popups";
-  const response = await fetch(uri(context, path), {
-    method: "GET",
-    headers: headers(context),
-    cache: "no-store",
+  return withHttpTimeout(async (signal) => {
+    const response = await fetch(uri(context, path), {
+      method: "GET",
+      headers: headers(context),
+      cache: "no-store",
+      signal,
+    });
+    if (response.status !== 200) throw new PopupHttpException(response.status, path);
+    return parseFetchResult(await response.json());
   });
-  if (response.status !== 200) throw new PopupHttpException(response.status, path);
-  return parseFetchResult(await response.json());
 }
 
 export async function sendEvents(
@@ -65,13 +80,16 @@ export async function sendEvents(
   events: PopupEvent[]
 ): Promise<void> {
   const path = "/ingest/popup";
-  const response = await fetch(uri(context, path), {
-    method: "POST",
-    headers: headers(context, { "content-type": "application/json" }),
-    body: JSON.stringify({ events }),
+  await withHttpTimeout(async (signal) => {
+    const response = await fetch(uri(context, path), {
+      method: "POST",
+      headers: headers(context, { "content-type": "application/json" }),
+      body: JSON.stringify({ events }),
+      signal,
+    });
+    if (response.status < 200 || response.status >= 300) {
+      throw new PopupHttpException(response.status, path);
+    }
   });
-  if (response.status < 200 || response.status >= 300) {
-    throw new PopupHttpException(response.status, path);
-  }
   inAppLog(`sent ${events.length} event(s)`);
 }

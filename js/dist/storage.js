@@ -22,6 +22,7 @@ const MAX_TRACKED = 2000;
 /** Fallback for denied or quota-full localStorage. It lasts for this page session. */
 const memoryPending = new Map();
 const memorySeen = new Map();
+const memoryShown = new Map();
 function readList(key) {
     if (typeof window === "undefined")
         return [];
@@ -57,18 +58,18 @@ function migrateShown(storage) {
     trimOldest(storage, SHOWN_PREFIX, MAX_SHOWN, (key) => storage.getItem(key) ?? "", "");
 }
 export function loadShownIds() {
+    const ids = new Set(memoryShown.keys());
     const storage = localStorageOrNull();
     if (!storage)
-        return new Set();
+        return ids;
     try {
         migrateShown(storage);
+        for (const key of keysWithPrefix(storage, SHOWN_PREFIX)) {
+            ids.add(decodeURIComponent(key.slice(SHOWN_PREFIX.length)));
+        }
     }
     catch (error) {
         inAppLog(`could not read shown ids: ${error}`);
-    }
-    const ids = new Set();
-    for (const key of keysWithPrefix(storage, SHOWN_PREFIX)) {
-        ids.add(decodeURIComponent(key.slice(SHOWN_PREFIX.length)));
     }
     return ids;
 }
@@ -81,7 +82,14 @@ function writeShown(storage, id) {
     trimOldest(storage, SHOWN_PREFIX, MAX_SHOWN, (item) => storage.getItem(item) ?? "", key);
     return true;
 }
+function rememberShownInMemory(id) {
+    if (!id || memoryShown.has(id))
+        return;
+    memoryShown.set(id, new Date().toISOString());
+    trimMemory(memoryShown, MAX_SHOWN, (at) => at);
+}
 export function markShown(id) {
+    rememberShownInMemory(id);
     const storage = localStorageOrNull();
     if (!storage)
         return;
@@ -125,6 +133,8 @@ function claimToken() {
  * record, so a reload or crash before `didDraw` can recover it after expiry.
  */
 export function claimShown(id, stillValid = () => true) {
+    if (memoryShown.has(id))
+        return Promise.resolve({ status: "shown" });
     const storage = localStorageOrNull();
     if (!storage || !id) {
         return Promise.resolve({ status: stillValid() ? "unstored" : "stale" });
@@ -155,6 +165,7 @@ export function claimShown(id, stillValid = () => true) {
 }
 /** Converts this lease into the durable shown record after the popup is drawn. */
 export async function finalizeShown(claim) {
+    rememberShownInMemory(claim.id);
     const storage = localStorageOrNull();
     if (!storage || !claim.id)
         return;

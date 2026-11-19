@@ -31,6 +31,14 @@ export type PopupTheme = {
     overlayOpacity: number;
     radius: number;
 };
+export type PopupDelivery = {
+    availableFor: {
+        value: number;
+        unit: "hours" | "days";
+    };
+    customEndsAt?: string;
+    timeZone?: string;
+};
 export type PopupContent = {
     version: 1;
     layout: PopupLayout;
@@ -43,6 +51,8 @@ export type PopupContent = {
     close: PopupClose;
     theme: PopupTheme;
     autoDismissSec?: number;
+    /** Campaign metadata carried for contract parity; the server applies it. */
+    delivery?: PopupDelivery;
 };
 export type InAppPopup = {
     id: string;

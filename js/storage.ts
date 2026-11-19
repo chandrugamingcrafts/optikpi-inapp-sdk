@@ -24,6 +24,7 @@ const MAX_TRACKED = 2000;
 /** Fallback for denied or quota-full localStorage. It lasts for this page session. */
 const memoryPending = new Map<string, QueuedEvent>();
 const memorySeen = new Map<string, string>();
+const memoryShown = new Map<string, string>();
 
 function readList(key: string): string[] {
   if (typeof window === "undefined") return [];
@@ -61,16 +62,16 @@ function migrateShown(storage: Storage): void {
 }
 
 export function loadShownIds(): Set<string> {
+  const ids = new Set(memoryShown.keys());
   const storage = localStorageOrNull();
-  if (!storage) return new Set();
+  if (!storage) return ids;
   try {
     migrateShown(storage);
+    for (const key of keysWithPrefix(storage, SHOWN_PREFIX)) {
+      ids.add(decodeURIComponent(key.slice(SHOWN_PREFIX.length)));
+    }
   } catch (error) {
     inAppLog(`could not read shown ids: ${error}`);
-  }
-  const ids = new Set<string>();
-  for (const key of keysWithPrefix(storage, SHOWN_PREFIX)) {
-    ids.add(decodeURIComponent(key.slice(SHOWN_PREFIX.length)));
   }
   return ids;
 }
@@ -84,7 +85,14 @@ function writeShown(storage: Storage, id: string): boolean {
   return true;
 }
 
+function rememberShownInMemory(id: string): void {
+  if (!id || memoryShown.has(id)) return;
+  memoryShown.set(id, new Date().toISOString());
+  trimMemory(memoryShown, MAX_SHOWN, (at) => at);
+}
+
 export function markShown(id: string): void {
+  rememberShownInMemory(id);
   const storage = localStorageOrNull();
   if (!storage) return;
   try {
@@ -149,6 +157,7 @@ function claimToken(): string {
  * record, so a reload or crash before `didDraw` can recover it after expiry.
  */
 export function claimShown(id: string, stillValid: () => boolean = () => true): Promise<ClaimResult> {
+  if (memoryShown.has(id)) return Promise.resolve({ status: "shown" });
   const storage = localStorageOrNull();
   if (!storage || !id) {
     return Promise.resolve({ status: stillValid() ? "unstored" : "stale" });
@@ -180,6 +189,7 @@ export function claimShown(id: string, stillValid: () => boolean = () => true): 
 
 /** Converts this lease into the durable shown record after the popup is drawn. */
 export async function finalizeShown(claim: ShownClaim): Promise<void> {
+  rememberShownInMemory(claim.id);
   const storage = localStorageOrNull();
   if (!storage || !claim.id) return;
   try {

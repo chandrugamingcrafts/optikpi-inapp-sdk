@@ -114,6 +114,22 @@ function parseImage(json) {
         tapAction: parseAction(json.tapAction) ?? undefined,
     };
 }
+function parseDelivery(json) {
+    if (!isRecord(json) || !isRecord(json.availableFor))
+        return undefined;
+    const value = json.availableFor.value;
+    const unit = json.availableFor.unit;
+    if (typeof value !== "number" ||
+        !Number.isFinite(value) ||
+        (unit !== "hours" && unit !== "days")) {
+        return undefined;
+    }
+    return {
+        availableFor: { value, unit },
+        customEndsAt: typeof json.customEndsAt === "string" ? json.customEndsAt : undefined,
+        timeZone: typeof json.timeZone === "string" ? json.timeZone : undefined,
+    };
+}
 export function isGradientUrl(url) {
     return url.startsWith("gradient:");
 }
@@ -211,6 +227,7 @@ export function parsePopupContent(json) {
             : typeof autoDismiss === "number" && Number.isFinite(autoDismiss) && autoDismiss > 0
                 ? Math.ceil(autoDismiss)
                 : undefined,
+        delivery: parseDelivery(json.delivery),
     };
 }
 function parseDate(value) {
