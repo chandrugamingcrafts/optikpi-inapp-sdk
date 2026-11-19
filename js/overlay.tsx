@@ -730,11 +730,28 @@ export default function OptikpiInAppOverlay() {
 
   useEffect(() => {
     if (!active) return;
-    controller.didDraw(active);
-    const seconds = active.popup.content.autoDismissSec;
-    if (!seconds) return;
-    const timer = window.setTimeout(() => controller.close(active, true), seconds * 1000);
-    return () => window.clearTimeout(timer);
+    let drawn = false;
+    let timer: number | undefined;
+    const hidden = () =>
+      typeof document !== "undefined" && document.visibilityState === "hidden";
+    const draw = () => {
+      if (hidden()) return;
+      if (!drawn) {
+        drawn = true;
+        controller.didDraw(active);
+      }
+      const seconds = active.popup.content.autoDismissSec;
+      if (!seconds || timer != null) return;
+      timer = window.setTimeout(() => controller.close(active, true), seconds * 1000);
+    };
+    draw();
+    document.addEventListener("visibilitychange", draw);
+    window.addEventListener("pageshow", draw);
+    return () => {
+      document.removeEventListener("visibilitychange", draw);
+      window.removeEventListener("pageshow", draw);
+      if (timer != null) window.clearTimeout(timer);
+    };
   }, [active]);
 
   const card = useMemo(() => {

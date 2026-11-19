@@ -53,11 +53,17 @@ function asEnum(value, allowed) {
 function parseColor(value, fallback) {
     if (typeof value !== "string")
         return fallback;
-    const hex = value.trim();
-    if (!/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.test(hex)) {
+    const match = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/.exec(value.trim());
+    if (!match)
         return fallback;
+    let digits = match[1];
+    if (digits.length === 3) {
+        digits = digits
+            .split("")
+            .map((channel) => channel + channel)
+            .join("");
     }
-    return hex;
+    return `#${digits.toUpperCase()}`;
 }
 function parseCustomData(json) {
     const data = {};
