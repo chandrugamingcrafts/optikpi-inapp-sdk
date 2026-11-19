@@ -143,6 +143,39 @@ function dialogLabel(content) {
         return alt;
     return "Pop-up";
 }
+/** Title and body the layout actually shows, so a screen reader hears the same message. */
+function liveMessage(content) {
+    const hideBody = content.layout === "banner" && content.size === "iab_320x50";
+    const parts = [content.title, hideBody ? undefined : content.body, content.image?.alt]
+        .map((part) => part?.trim())
+        .filter((part) => Boolean(part));
+    return parts.join(". ") || "Pop-up";
+}
+const POLITE_LIVE_STYLE = {
+    position: "absolute",
+    width: 1,
+    height: 1,
+    padding: 0,
+    margin: -1,
+    overflow: "hidden",
+    clip: "rect(0, 0, 0, 0)",
+    clipPath: "inset(50%)",
+    whiteSpace: "nowrap",
+    border: 0,
+    pointerEvents: "none",
+};
+/**
+ * A live region added with its text already set is often skipped. The region is
+ * mounted empty, then filled, so the change is announced without moving focus.
+ */
+function PoliteStatus({ text }) {
+    const [message, setMessage] = useState("");
+    useEffect(() => {
+        const id = window.setTimeout(() => setMessage(text), 50);
+        return () => window.clearTimeout(id);
+    }, [text]);
+    return (_jsx("div", { role: "status", "aria-live": "polite", "aria-atomic": "true", style: POLITE_LIVE_STYLE, children: message }));
+}
 function tabbable(root) {
     return [...root.querySelectorAll(TABBABLE)].filter((el) => {
         if (el.getAttribute("aria-hidden") === "true")
@@ -263,7 +296,7 @@ function PopupCard({ active, desktop, screenWidth, screenHeight, }) {
         const top = content.position !== "bottom";
         const iab = content.size === "iab_320x50";
         const bannerWidth = iab ? Math.min(320, width) : width;
-        return (_jsx("div", { style: {
+        return (_jsxs("div", { style: {
                 position: "fixed",
                 left: 0,
                 right: 0,
@@ -273,20 +306,20 @@ function PopupCard({ active, desktop, screenWidth, screenHeight, }) {
                 display: "flex",
                 justifyContent: "center",
                 pointerEvents: "none",
-            }, children: _jsxs("div", { style: {
-                    pointerEvents: "auto",
-                    boxSizing: "border-box",
-                    width: bannerWidth,
-                    height: iab ? bannerWidth * (50 / 320) : undefined,
-                    background: content.theme.background,
-                    color: content.theme.text,
-                    borderRadius: !desktop && !iab ? 0 : Math.min(content.theme.radius, 8),
-                    boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)",
-                    padding: iab ? "0 12px" : "10px 12px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 12,
-                }, children: [image ? (_jsx("div", { style: { width: iab ? 32 : 40, height: iab ? 32 : 40, flexShrink: 0 }, children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text, radius: 6 }) })) : null, _jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [content.title ? (_jsx("div", { style: { fontWeight: 600, fontSize: iab ? 12 : 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: content.title })) : null, content.body && !iab ? (_jsx("div", { style: { fontSize: 12, opacity: 0.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: content.body })) : null] }), content.buttons.length ? (_jsx("div", { style: { maxWidth: "45%" }, children: _jsx(Buttons, { buttons: content.buttons, content: content, compact: true, onButton: onButton }) })) : null, content.close.show ? (_jsx("button", { type: "button", "aria-label": "Close", onClick: onClose, style: { border: "none", background: "transparent", cursor: "pointer", color: content.theme.text, opacity: 0.7 }, children: "\u00D7" })) : null] }) }));
+            }, children: [_jsx(PoliteStatus, { text: liveMessage(content) }), _jsxs("div", { style: {
+                        pointerEvents: "auto",
+                        boxSizing: "border-box",
+                        width: bannerWidth,
+                        height: iab ? bannerWidth * (50 / 320) : undefined,
+                        background: content.theme.background,
+                        color: content.theme.text,
+                        borderRadius: !desktop && !iab ? 0 : Math.min(content.theme.radius, 8),
+                        boxShadow: "0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.1)",
+                        padding: iab ? "0 12px" : "10px 12px",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 12,
+                    }, children: [image ? (_jsx("div", { style: { width: iab ? 32 : 40, height: iab ? 32 : 40, flexShrink: 0 }, children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text, radius: 6 }) })) : null, _jsxs("div", { style: { flex: 1, minWidth: 0 }, children: [content.title ? (_jsx("div", { style: { fontWeight: 600, fontSize: iab ? 12 : 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: content.title })) : null, content.body && !iab ? (_jsx("div", { style: { fontSize: 12, opacity: 0.8, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }, children: content.body })) : null] }), content.buttons.length ? (_jsx("div", { style: { maxWidth: "45%" }, children: _jsx(Buttons, { buttons: content.buttons, content: content, compact: true, onButton: onButton }) })) : null, content.close.show ? (_jsx("button", { type: "button", "aria-label": "Close", onClick: onClose, style: { border: "none", background: "transparent", cursor: "pointer", color: content.theme.text, opacity: 0.7 }, children: "\u00D7" })) : null] })] }));
     }
     if (content.layout === "toast") {
         const bottom = content.position === "bottomRight";
@@ -305,7 +338,7 @@ function PopupCard({ active, desktop, screenWidth, screenHeight, }) {
                 boxShadow: "0 20px 25px -5px rgba(0,0,0,0.1)",
                 overflow: "hidden",
                 display: "flex",
-            }, children: [showImage && image ? (_jsx("div", { style: { width: 64, flexShrink: 0 }, children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text }) })) : null, _jsxs("div", { style: { padding: "12px 32px 12px 12px", flex: 1 }, children: [_jsx(TextBlock, { content: content, titleSize: 14, bodySize: 12 }), content.buttons.length ? (_jsx("div", { style: { marginTop: 8 }, children: _jsx(Buttons, { buttons: content.buttons, content: content, compact: true, onButton: onButton }) })) : null] }), _jsx(CloseButton, { content: content, dark: dark, onClose: onClose })] }));
+            }, children: [_jsx(PoliteStatus, { text: liveMessage(content) }), showImage && image ? (_jsx("div", { style: { width: 64, flexShrink: 0 }, children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text }) })) : null, _jsxs("div", { style: { padding: "12px 32px 12px 12px", flex: 1 }, children: [_jsx(TextBlock, { content: content, titleSize: 14, bodySize: 12 }), content.buttons.length ? (_jsx("div", { style: { marginTop: 8 }, children: _jsx(Buttons, { buttons: content.buttons, content: content, compact: true, onButton: onButton }) })) : null] }), _jsx(CloseButton, { content: content, dark: dark, onClose: onClose })] }));
     }
     if (content.layout === "bottomSheet") {
         return (_jsxs(BlockingFrame, { active: active, className: "optikpi-inapp optikpi-stage", children: [_jsx(OverlayScrim, { content: content, onOutside: onClose }), _jsxs("div", { className: "optikpi-sheet-panel optikpi-card", "data-size": content.size, style: { ...themeVars(content), overflow: "auto" }, children: [_jsx("div", { style: { width: 40, height: 4, borderRadius: 2, background: "#D1D5DB", margin: "8px auto 0" } }), image && content.size !== "sm" ? (_jsx("div", { className: "optikpi-hero", style: { height: desktop ? 180 : 160, margin: "12px 16px 0", width: "auto" }, children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text, radius: 8 }) })) : null, _jsxs("div", { className: "optikpi-body", children: [_jsx(TextBlock, { content: content, fluid: true }), _jsx(Buttons, { buttons: content.buttons, content: content, onButton: onButton })] }), _jsx(CloseButton, { content: content, dark: dark, onClose: onClose })] })] }));

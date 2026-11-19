@@ -27,6 +27,8 @@ export declare class OptikpiInAppController {
     private shownThisVisit;
     private picking;
     private pickAgain;
+    /** Claim for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
+    private undrawnClaimId;
     private flushTimer;
     private testCount;
     private listeners;
@@ -37,6 +39,7 @@ export declare class OptikpiInAppController {
     subscribe(listener: () => void): () => void;
     private emit;
     private setCurrent;
+    private releaseUndrawn;
     init(options: InitOptions): Promise<void>;
     setPlayerToken(playerToken: string): void;
     logout(): Promise<void>;

@@ -18,6 +18,8 @@
 - The shown-id claim rechecks route, session and tab state once it holds the cross-tab lock, and an id claimed for a popup that is then not drawn is released, so a once-per-device campaign is not lost to a change during the wait.
 - An `iab_320x50` banner uses `border-box`, so its 12px side padding stays inside the 320×50 size instead of widening the card to 344px.
 - Secondary button borders and image placeholders apply transparency to the parsed theme color, so `#RGB` and `#RRGGBBAA` stay valid CSS instead of becoming `#fff33` or `#1018288033`.
+- A shown-id claim stays reversible until the overlay reports the popup drawn. Clearing it first, on a blocked route, logout, or another popup, releases the id so a message that never appeared is not stored as shown.
+- Banners and toasts announce their text in a polite live region and leave focus where it is, so a screen reader hears a short-lived toast instead of missing it.
 - `fullscreen` is not drawn. A popup with that layout is rejected while parsing, so it shows nothing and sends no events.
 
 ## 0.1.0

@@ -287,6 +287,46 @@ function dialogLabel(content: PopupContent): string {
   return "Pop-up";
 }
 
+/** Title and body the layout actually shows, so a screen reader hears the same message. */
+function liveMessage(content: PopupContent): string {
+  const hideBody = content.layout === "banner" && content.size === "iab_320x50";
+  const parts = [content.title, hideBody ? undefined : content.body, content.image?.alt]
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part));
+  return parts.join(". ") || "Pop-up";
+}
+
+const POLITE_LIVE_STYLE: CSSProperties = {
+  position: "absolute",
+  width: 1,
+  height: 1,
+  padding: 0,
+  margin: -1,
+  overflow: "hidden",
+  clip: "rect(0, 0, 0, 0)",
+  clipPath: "inset(50%)",
+  whiteSpace: "nowrap",
+  border: 0,
+  pointerEvents: "none",
+};
+
+/**
+ * A live region added with its text already set is often skipped. The region is
+ * mounted empty, then filled, so the change is announced without moving focus.
+ */
+function PoliteStatus({ text }: { text: string }) {
+  const [message, setMessage] = useState("");
+  useEffect(() => {
+    const id = window.setTimeout(() => setMessage(text), 50);
+    return () => window.clearTimeout(id);
+  }, [text]);
+  return (
+    <div role="status" aria-live="polite" aria-atomic="true" style={POLITE_LIVE_STYLE}>
+      {message}
+    </div>
+  );
+}
+
 function tabbable(root: HTMLElement): HTMLElement[] {
   return [...root.querySelectorAll<HTMLElement>(TABBABLE)].filter((el) => {
     if (el.getAttribute("aria-hidden") === "true") return false;
@@ -461,6 +501,7 @@ function PopupCard({
           pointerEvents: "none",
         }}
       >
+        <PoliteStatus text={liveMessage(content)} />
         <div
           style={{
             pointerEvents: "auto",
@@ -536,6 +577,7 @@ function PopupCard({
           display: "flex",
         }}
       >
+        <PoliteStatus text={liveMessage(content)} />
         {showImage && image ? (
           <div style={{ width: 64, flexShrink: 0 }}>
             <PopupImageView

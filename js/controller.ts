@@ -67,6 +67,8 @@ export class OptikpiInAppController {
   private shownThisVisit = false;
   private picking = false;
   private pickAgain = false;
+  /** Claim for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
+  private undrawnClaimId: string | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private testCount = 0;
   private listeners = new Set<() => void>();
@@ -93,8 +95,24 @@ export class OptikpiInAppController {
   }
 
   private setCurrent(value: ActivePopup | null) {
+    const previous = this.current;
     this.current = value;
     this.emit();
+    if (
+      previous &&
+      !previous.isTest &&
+      previous.popup.id === this.undrawnClaimId &&
+      value?.popup.id !== previous.popup.id
+    ) {
+      this.releaseUndrawn(previous.popup.id);
+    }
+  }
+
+  private releaseUndrawn(id: string) {
+    if (this.undrawnClaimId !== id) return;
+    this.undrawnClaimId = null;
+    inAppLog(`release ${id}: not drawn`);
+    void releaseShown(id);
   }
 
   async init(options: InitOptions) {
@@ -244,6 +262,7 @@ export class OptikpiInAppController {
       inAppLog(`test pop-up drawn (${active.popup.content.layout})`);
       return;
     }
+    if (this.undrawnClaimId === active.popup.id) this.undrawnClaimId = null;
     markShown(active.popup.id);
     this.track(active, "impression");
   }
@@ -331,6 +350,7 @@ export class OptikpiInAppController {
       this.flushTimer = null;
     }
     if (this.current && !this.current.isTest) this.setCurrent(null);
+    else if (this.undrawnClaimId) this.releaseUndrawn(this.undrawnClaimId);
     if (flush && session) void this.flush(session);
   }
 
@@ -481,7 +501,15 @@ export class OptikpiInAppController {
       giveBack();
       return;
     }
+    // Keep the claim until didDraw. A blocked route, logout, or a replacement
+    // popup can clear current before the overlay effect runs, and that clear
+    // releases an id that never produced an impression.
+    const held = claim === "claimed" ? claimedId : null;
     claimedId = null;
+    if (this.undrawnClaimId && this.undrawnClaimId !== held) {
+      this.releaseUndrawn(this.undrawnClaimId);
+    }
+    this.undrawnClaimId = held;
     this.shownThisVisit = true;
     session.waiting = session.waiting.filter((popup) => popup.id !== next!.id);
     inAppLog(`show ${next.id} (${next.content.layout}) on ${this.route}`);
