@@ -269,21 +269,48 @@ export function claimShown(id, stillValid = () => true) {
 }
 /** Converts this lease into the durable shown record after the popup is drawn. */
 export async function finalizeShown(claim) {
-    rememberShownInMemory(claim.id);
     const storage = localStorageOrNull();
-    if (!storage || !claim.id)
-        return;
+    if (!claim.id)
+        return false;
+    if (!storage) {
+        rememberShownInMemory(claim.id);
+        return true;
+    }
     try {
-        await withShownLock(() => {
+        return await withShownLock(() => {
             const stored = readShownClaim(storage, claim.id);
             if (stored?.token !== claim.token)
-                return;
+                return false;
             writeShown(storage, claim.id);
             storage.removeItem(shownClaimKey(claim.id));
+            rememberShownInMemory(claim.id);
+            return true;
         });
     }
     catch (error) {
         inAppLog(`could not finalize shown id: ${error}`);
+        return false;
+    }
+}
+/** Extends this tab's lease. A replacement owner's lease is left unchanged. */
+export async function renewShown(claim) {
+    const storage = localStorageOrNull();
+    if (!claim.id)
+        return false;
+    if (!storage)
+        return true;
+    try {
+        return await withShownLock(() => {
+            const stored = readShownClaim(storage, claim.id);
+            if (stored?.token !== claim.token)
+                return false;
+            storage.setItem(shownClaimKey(claim.id), JSON.stringify({ token: claim.token, expiresAt: Date.now() + SHOWN_CLAIM_LEASE_MS }));
+            return true;
+        });
+    }
+    catch (error) {
+        inAppLog(`could not renew shown claim: ${error}`);
+        return false;
     }
 }
 /** Takes back this lease if the popup was never drawn. A newer owner's lease is untouched. */

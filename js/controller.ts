@@ -10,6 +10,7 @@ import {
   markShown,
   queuedFor,
   releaseShown,
+  renewShown,
   removeQueued,
   withEventFlushLock,
   type ClaimResult,
@@ -61,6 +62,7 @@ export type InitOptions = {
 
 const IMAGE_WAIT_MS = 10_000;
 const FLUSH_DELAY_MS = 2_000;
+const LEASE_RENEW_MS = 20_000;
 const BATCH_SIZE = 50;
 
 function rendersPopupImage(content: PopupContent): boolean {
@@ -99,6 +101,8 @@ export class OptikpiInAppController {
   private pickAgain = false;
   /** Lease for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
   private undrawnClaim: ShownClaim | null = null;
+  private leaseRenewTimer: ReturnType<typeof setTimeout> | null = null;
+  private pendingRelease: Promise<void> = Promise.resolve();
   private claimRetryTimer: ReturnType<typeof setTimeout> | null = null;
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private testCount = 0;
@@ -135,16 +139,53 @@ export class OptikpiInAppController {
       previous.popup.id === this.undrawnClaim?.id &&
       value?.popup.id !== previous.popup.id
     ) {
+      this.requeueUndrawn(previous.popup);
       this.releaseUndrawn(previous.popup.id);
     }
+  }
+
+  private requeueUndrawn(popup: InAppPopup) {
+    const session = this.session;
+    if (!session || session.waiting.some((waiting) => waiting.id === popup.id)) return;
+    session.waiting = [...session.waiting, popup];
   }
 
   private releaseUndrawn(id: string) {
     if (this.undrawnClaim?.id !== id) return;
     const claim = this.undrawnClaim;
     this.undrawnClaim = null;
+    this.stopLeaseRenewal();
     inAppLog(`release ${id}: not drawn`);
-    void releaseShown(claim);
+    this.pendingRelease = releaseShown(claim);
+  }
+
+  private holdLease(claim: ShownClaim | null) {
+    this.stopLeaseRenewal();
+    this.undrawnClaim = claim;
+    if (!claim) return;
+    const renew = () => {
+      if (this.undrawnClaim?.token !== claim.token) return;
+      void renewShown(claim).then((kept) => {
+        if (this.undrawnClaim?.token !== claim.token) return;
+        if (!kept) {
+          this.undrawnClaim = null;
+          this.stopLeaseRenewal();
+          if (this.current?.popup.id === claim.id && !this.current.isTest) {
+            inAppLog(`drop ${claim.id}: another page owns its claim`);
+            this.setCurrent(null);
+          }
+          return;
+        }
+        this.leaseRenewTimer = setTimeout(renew, LEASE_RENEW_MS);
+      });
+    };
+    this.leaseRenewTimer = setTimeout(renew, LEASE_RENEW_MS);
+  }
+
+  private stopLeaseRenewal() {
+    if (!this.leaseRenewTimer) return;
+    clearTimeout(this.leaseRenewTimer);
+    this.leaseRenewTimer = null;
   }
 
   async init(options: InitOptions) {
@@ -218,8 +259,14 @@ export class OptikpiInAppController {
       inAppLog(`hide ${active.popup.id}: ${route} is blocked`);
       this.setCurrent(null);
     }
-    this.showMoment();
-    this.fetchMoment();
+    // The lease removal is asynchronous. Selecting immediately can observe the
+    // lease this route change just released and postpone the popup for its TTL.
+    const released = this.pendingRelease;
+    void released.then(() => {
+      if (this.route !== route) return;
+      this.showMoment();
+      this.fetchMoment();
+    });
   }
 
   onForeground() {
@@ -298,10 +345,21 @@ export class OptikpiInAppController {
     if (this.undrawnClaim?.id === active.popup.id) {
       const claim = this.undrawnClaim;
       this.undrawnClaim = null;
-      void finalizeShown(claim);
-    } else {
-      // Storage may have been unavailable when selection ran.
-      markShown(active.popup.id);
+      this.stopLeaseRenewal();
+      void this.finishDraw(active, claim);
+      return;
+    }
+    // Storage may have been unavailable when selection ran.
+    markShown(active.popup.id);
+    this.track(active, "impression");
+  }
+
+  private async finishDraw(active: ActivePopup, claim: ShownClaim) {
+    const owned = await finalizeShown(claim);
+    if (!owned) {
+      inAppLog(`drop ${claim.id}: its claim was replaced before draw`);
+      if (this.current === active) this.setCurrent(null);
+      return;
     }
     this.track(active, "impression");
   }
@@ -395,6 +453,7 @@ export class OptikpiInAppController {
       clearTimeout(this.claimRetryTimer);
       this.claimRetryTimer = null;
     }
+    this.stopLeaseRenewal();
     if (this.current && !this.current.isTest) this.setCurrent(null);
     else if (this.undrawnClaim) this.releaseUndrawn(this.undrawnClaim.id);
     return flush && session ? this.flush(session) : Promise.resolve();
@@ -521,15 +580,23 @@ export class OptikpiInAppController {
       if (next && stillValid()) {
         // Lease before setCurrent. didDraw finalizes the id only after paint, while
         // the lease stops another tab from drawing the same popup in the meantime.
-        claim = await claimShown(next.id, stillValid);
-        if (claim.status === "claimed") claimed = claim.claim;
-        if (claim.status === "shown") {
-          inAppLog(`skip ${next.id}: already shown`);
-          session.waiting = session.waiting.filter((popup) => popup.id !== next!.id);
+        const selected = next;
+        claim = await claimShown(selected.id, stillValid);
+        if (isPopupExpired(selected, new Date())) {
+          inAppLog(`skip ${selected.id}: expired while its claim was acquired`);
+          if (claim.status === "claimed") void releaseShown(claim.claim);
+          session.waiting = session.waiting.filter((popup) => popup.id !== selected.id);
+          next = null;
+          claim = { status: "stale" };
+          this.pickAgain = true;
+        } else if (claim.status === "claimed") claimed = claim.claim;
+        else if (claim.status === "shown") {
+          inAppLog(`skip ${selected.id}: already shown`);
+          session.waiting = session.waiting.filter((popup) => popup.id !== selected.id);
           next = null;
           this.pickAgain = true;
         } else if (claim.status === "leased") {
-          inAppLog(`retry ${next.id}: another page holds a temporary claim`);
+          inAppLog(`retry ${selected.id}: another page holds a temporary claim`);
           this.retryClaimAtExpiry(session, claim.retryAfterMs);
           // Keep it in waiting. The expiry timer will select it again without a fetch.
           next = null;
@@ -569,7 +636,7 @@ export class OptikpiInAppController {
     if (this.undrawnClaim && this.undrawnClaim.token !== held?.token) {
       this.releaseUndrawn(this.undrawnClaim.id);
     }
-    this.undrawnClaim = held;
+    this.holdLease(held);
     if (this.claimRetryTimer) {
       clearTimeout(this.claimRetryTimer);
       this.claimRetryTimer = null;
@@ -594,7 +661,11 @@ export class OptikpiInAppController {
         if (action.value) active.onDeepLink?.(action.value);
         return;
       case "custom":
-        if (action.customData) active.onCustomAction?.(action.customData);
+        if (action.customData) {
+          active.onCustomAction?.(
+            Object.fromEntries(action.customData.map((pair) => [pair.key, pair.value]))
+          );
+        }
         return;
       case "url": {
         if (!action.value) return;

@@ -4,10 +4,15 @@ export type PopupPosition = "top" | "bottom" | "center" | "topRight" | "bottomRi
 export type PopupActionType = "deeplink" | "url" | "dismiss" | "custom";
 export type PopupButtonStyle = "primary" | "secondary";
 export type PopupClosePosition = "topRight" | "topLeft";
+export type PopupCustomPair = {
+    key: string;
+    value: string;
+};
 export type PopupAction = {
     type: PopupActionType;
     value?: string;
-    customData?: Record<string, string>;
+    /** Contract pair list. A repeated key keeps its last value. */
+    customData?: PopupCustomPair[];
 };
 export type PopupButton = {
     label: string;

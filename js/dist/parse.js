@@ -66,18 +66,18 @@ function parseColor(value, fallback) {
     return `#${digits.toUpperCase()}`;
 }
 function parseCustomData(json) {
-    const data = {};
+    const data = new Map();
     if (!Array.isArray(json))
-        return data;
+        return [];
     for (const entry of json) {
         if (!isRecord(entry))
             continue;
         const key = typeof entry.key === "string" ? entry.key.trim() : "";
         if (!key || typeof entry.value !== "string")
             continue;
-        data[key] = entry.value;
+        data.set(key, entry.value);
     }
-    return data;
+    return [...data.entries()].map(([key, value]) => ({ key, value }));
 }
 function parseAction(json) {
     if (!isRecord(json))
@@ -87,7 +87,7 @@ function parseAction(json) {
         return null;
     if (type === "custom") {
         const customData = parseCustomData(json.customData);
-        if (Object.keys(customData).length === 0)
+        if (customData.length === 0)
             return { type: "dismiss" };
         return { type, customData };
     }

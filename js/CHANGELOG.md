@@ -33,6 +33,10 @@
 - An impression and its auto-dismiss timer wait until the page is visible, so backgrounding the tab after selection does not finalize a popup nobody saw.
 - If both Web Locks and IndexedDB locking fail, popup claims and event flushes still run instead of rejecting the work.
 - Accepted theme colors expand `#RGB` and are returned as uppercase `#RRGGBB` or `#RRGGBBAA`.
+- A pending shown lease is renewed until draw, and a draw is accepted only when this page still owns that lease.
+- Releasing an undrawn popup puts it back into the waiting list, so a blocked route does not lose the campaign until the next fetch.
+- Popup expiry is checked again after the shown-id lock is acquired, and a claim made for an expired popup is released.
+- Custom actions keep `customData` as key/value pairs. The custom-action callback still receives a record.
 - URL actions resolve only to `http:` or `https:` before opening, rejecting active-script and other unapproved schemes.
 - `logout()` waits for the final serialized event flush attempt, so an awaited logout does not return while its POST is still in flight.
 - Cross-tab shown claims and event flushes use Web Locks or an IndexedDB lease fallback, preserving serialization where `navigator.locks` is unavailable.

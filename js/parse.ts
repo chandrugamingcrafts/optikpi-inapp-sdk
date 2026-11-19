@@ -11,10 +11,16 @@ export type PopupActionType = "deeplink" | "url" | "dismiss" | "custom";
 export type PopupButtonStyle = "primary" | "secondary";
 export type PopupClosePosition = "topRight" | "topLeft";
 
+export type PopupCustomPair = {
+  key: string;
+  value: string;
+};
+
 export type PopupAction = {
   type: PopupActionType;
   value?: string;
-  customData?: Record<string, string>;
+  /** Contract pair list. A repeated key keeps its last value. */
+  customData?: PopupCustomPair[];
 };
 
 export type PopupButton = {
@@ -160,16 +166,16 @@ function parseColor(value: unknown, fallback: string): string {
   return `#${digits.toUpperCase()}`;
 }
 
-function parseCustomData(json: unknown): Record<string, string> {
-  const data: Record<string, string> = {};
-  if (!Array.isArray(json)) return data;
+function parseCustomData(json: unknown): PopupCustomPair[] {
+  const data = new Map<string, string>();
+  if (!Array.isArray(json)) return [];
   for (const entry of json) {
     if (!isRecord(entry)) continue;
     const key = typeof entry.key === "string" ? entry.key.trim() : "";
     if (!key || typeof entry.value !== "string") continue;
-    data[key] = entry.value;
+    data.set(key, entry.value);
   }
-  return data;
+  return [...data.entries()].map(([key, value]) => ({ key, value }));
 }
 
 function parseAction(json: unknown): PopupAction | null {
@@ -178,7 +184,7 @@ function parseAction(json: unknown): PopupAction | null {
   if (!type) return null;
   if (type === "custom") {
     const customData = parseCustomData(json.customData);
-    if (Object.keys(customData).length === 0) return { type: "dismiss" };
+    if (customData.length === 0) return { type: "dismiss" };
     return { type, customData };
   }
   const value = typeof json.value === "string" ? json.value.trim() : "";

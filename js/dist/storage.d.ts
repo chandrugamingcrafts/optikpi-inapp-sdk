@@ -28,7 +28,9 @@ export declare function withEventFlushLock<T>(workspaceId: string, playerId: str
  */
 export declare function claimShown(id: string, stillValid?: () => boolean): Promise<ClaimResult>;
 /** Converts this lease into the durable shown record after the popup is drawn. */
-export declare function finalizeShown(claim: ShownClaim): Promise<void>;
+export declare function finalizeShown(claim: ShownClaim): Promise<boolean>;
+/** Extends this tab's lease. A replacement owner's lease is left unchanged. */
+export declare function renewShown(claim: ShownClaim): Promise<boolean>;
 /** Takes back this lease if the popup was never drawn. A newer owner's lease is untouched. */
 export declare function releaseShown(claim: ShownClaim): Promise<void>;
 export type QueuedEvent = {

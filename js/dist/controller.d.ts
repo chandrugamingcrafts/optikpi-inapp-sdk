@@ -29,6 +29,8 @@ export declare class OptikpiInAppController {
     private pickAgain;
     /** Lease for `current` until `didDraw` finalizes it. Released if `current` is cleared first. */
     private undrawnClaim;
+    private leaseRenewTimer;
+    private pendingRelease;
     private claimRetryTimer;
     private flushTimer;
     private testCount;
@@ -40,7 +42,10 @@ export declare class OptikpiInAppController {
     subscribe(listener: () => void): () => void;
     private emit;
     private setCurrent;
+    private requeueUndrawn;
     private releaseUndrawn;
+    private holdLease;
+    private stopLeaseRenewal;
     init(options: InitOptions): Promise<void>;
     setPlayerToken(playerToken: string): void;
     logout(): Promise<void>;
@@ -58,6 +63,7 @@ export declare class OptikpiInAppController {
     private queueResume;
     showTest(content: PopupContent): void;
     didDraw(active: ActivePopup): void;
+    private finishDraw;
     close(active: ActivePopup, dismissed: boolean): boolean;
     tapButton(active: ActivePopup, index: number): void;
     tapImage(active: ActivePopup): void;
