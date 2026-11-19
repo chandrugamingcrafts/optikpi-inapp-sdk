@@ -173,6 +173,7 @@ function PopupImageView({
     <button
       type="button"
       onClick={onTap}
+      aria-label={image.alt?.trim() || "Image"}
       style={{
         padding: 0,
         border: "none",

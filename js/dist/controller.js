@@ -6,6 +6,21 @@ import { readPlayerTokenClaims } from "./token.js";
 const IMAGE_WAIT_MS = 10000;
 const FLUSH_DELAY_MS = 2000;
 const BATCH_SIZE = 50;
+function rendersPopupImage(content) {
+    if (!content.image)
+        return false;
+    switch (content.layout) {
+        case "toast":
+            return content.size === "md";
+        case "bottomSheet":
+            return content.size !== "sm";
+        case "modal":
+            return content.size !== "iab_300x250";
+        case "banner":
+        case "imageOnly":
+            return true;
+    }
+}
 export class OptikpiInAppController {
     constructor() {
         Object.defineProperty(this, "current", {
@@ -504,7 +519,7 @@ export class OptikpiInAppController {
                 now: new Date(),
             });
             const image = next?.content.image;
-            if (image && !image.url.startsWith("gradient:")) {
+            if (next && image && rendersPopupImage(next.content) && !image.url.startsWith("gradient:")) {
                 await Promise.race([
                     preloadImage(image.url),
                     new Promise((resolve) => setTimeout(resolve, IMAGE_WAIT_MS)),
@@ -655,7 +670,13 @@ export class OptikpiInAppController {
             } while (session.flushAgain);
         }
         finally {
+            const retry = session.flushAgain;
+            session.flushAgain = false;
             session.flushing = false;
+            // The coalescing timer has already fired. Preserve that request after a
+            // failed in-flight pass by scheduling another attempt.
+            if (retry && this.session === session)
+                this.scheduleFlush();
         }
     }
     /** One queue snapshot. A trigger during this pass sets `flushAgain` for a fresh snapshot. */

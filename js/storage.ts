@@ -21,6 +21,9 @@ const SHOWN_LOCK = "optikpi_inapp.shown";
 const SHOWN_CLAIM_LEASE_MS = 60_000;
 const MAX_QUEUED = 500;
 const MAX_TRACKED = 2000;
+/** Fallback for denied or quota-full localStorage. It lasts for this page session. */
+const memoryPending = new Map<string, QueuedEvent>();
+const memorySeen = new Map<string, string>();
 
 function readList(key: string): string[] {
   if (typeof window === "undefined") return [];
@@ -245,6 +248,31 @@ function eventDedupeKey(
   return `${workspaceId}|${playerId}|${event.trackingId}|${event.type}`;
 }
 
+function enqueueInMemory(
+  event: PopupEvent,
+  workspaceId: string,
+  playerId: string,
+  dedupeKey: string
+): boolean {
+  if (memorySeen.has(dedupeKey)) return false;
+  const raw = JSON.stringify({ workspaceId, playerId, event });
+  memoryPending.set(dedupeKey, { raw, workspaceId, playerId, event });
+  memorySeen.set(dedupeKey, event.at);
+  trimMemory(memoryPending, MAX_QUEUED, (item) => item.event.at);
+  trimMemory(memorySeen, MAX_TRACKED, (at) => at);
+  inAppLog(`queued ${event.type} ${event.trackingId} in memory`);
+  return true;
+}
+
+function trimMemory<T>(map: Map<string, T>, max: number, stamp: (value: T) => string) {
+  const extra = map.size - max;
+  if (extra <= 0) return;
+  const oldest = [...map.entries()]
+    .sort((a, b) => stamp(a[1]).localeCompare(stamp(b[1])))
+    .slice(0, extra);
+  for (const [key] of oldest) map.delete(key);
+}
+
 function localStorageOrNull(): Storage | null {
   if (typeof window === "undefined") return null;
   try {
@@ -334,14 +362,15 @@ export function enqueueEvent(
   workspaceId: string,
   playerId: string
 ): boolean {
+  const dedupeKey = eventDedupeKey(workspaceId, playerId, event);
+  if (memorySeen.has(dedupeKey)) return false;
   const storage = localStorageOrNull();
-  if (!storage) return false;
+  if (!storage) return enqueueInMemory(event, workspaceId, playerId, dedupeKey);
   try {
     migrateLegacyLists(storage);
-    const dedupeKey = eventDedupeKey(workspaceId, playerId, event);
     const seen = seenKey(dedupeKey);
-    if (storage.getItem(seen) != null) return false;
     const pending = pendingKey(dedupeKey);
+    if (storage.getItem(seen) != null || storage.getItem(pending) != null) return false;
     storage.setItem(pending, JSON.stringify({ workspaceId, playerId, event }));
     storage.setItem(seen, event.at);
     trimOldest(storage, PENDING_PREFIX, MAX_QUEUED, (key) => pendingAt(storage.getItem(key)), pending);
@@ -350,40 +379,48 @@ export function enqueueEvent(
     return true;
   } catch (error) {
     inAppLog(`could not queue ${event.type}: ${error}`);
-    return false;
+    return enqueueInMemory(event, workspaceId, playerId, dedupeKey);
   }
 }
 
 export function queuedFor(workspaceId: string, playerId: string): QueuedEvent[] {
   const storage = localStorageOrNull();
-  if (!storage) return [];
-  try {
-    migrateLegacyLists(storage);
-  } catch (error) {
-    inAppLog(`could not read event queue: ${error}`);
+  const byDedupe = new Map<string, QueuedEvent>();
+  if (storage) {
+    try {
+      migrateLegacyLists(storage);
+      for (const key of keysWithPrefix(storage, PENDING_PREFIX)) {
+        const parsed = parseQueued(storage.getItem(key) ?? "");
+        if (parsed == null) continue;
+        if (parsed.workspaceId !== workspaceId || parsed.playerId !== playerId) continue;
+        byDedupe.set(eventDedupeKey(workspaceId, playerId, parsed.event), parsed);
+      }
+    } catch (error) {
+      inAppLog(`could not read event queue: ${error}`);
+    }
   }
-  const items: QueuedEvent[] = [];
-  for (const key of keysWithPrefix(storage, PENDING_PREFIX)) {
-    const parsed = parseQueued(storage.getItem(key) ?? "");
-    if (parsed == null) continue;
-    if (parsed.workspaceId !== workspaceId || parsed.playerId !== playerId) continue;
-    items.push(parsed);
+  for (const [dedupeKey, item] of memoryPending) {
+    if (item.workspaceId !== workspaceId || item.playerId !== playerId) continue;
+    if (!byDedupe.has(dedupeKey)) byDedupe.set(dedupeKey, item);
   }
+  const items = [...byDedupe.values()];
   items.sort((a, b) => (a.event.at < b.event.at ? -1 : a.event.at > b.event.at ? 1 : 0));
   return items;
 }
 
 export function removeQueued(raws: string[]) {
   const storage = localStorageOrNull();
-  if (!storage) return;
-  try {
-    for (const raw of raws) {
-      const parsed = parseQueued(raw);
-      if (!parsed) continue;
-      const dedupeKey = eventDedupeKey(parsed.workspaceId, parsed.playerId, parsed.event);
-      storage.removeItem(pendingKey(dedupeKey));
+  for (const raw of raws) {
+    const parsed = parseQueued(raw);
+    if (!parsed) continue;
+    const dedupeKey = eventDedupeKey(parsed.workspaceId, parsed.playerId, parsed.event);
+    memoryPending.delete(dedupeKey);
+    if (storage) {
+      try {
+        storage.removeItem(pendingKey(dedupeKey));
+      } catch (error) {
+        inAppLog(`could not trim event queue: ${error}`);
+      }
     }
-  } catch (error) {
-    inAppLog(`could not trim event queue: ${error}`);
   }
 }

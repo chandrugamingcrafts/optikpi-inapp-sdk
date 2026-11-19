@@ -181,6 +181,10 @@
     border-top-right-radius: var(--popup-radius);
   }
 
+  .optikpi-sheet-panel .optikpi-body {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+
   .optikpi-sheet-panel[data-size="sm"] {
     height: 34vh;
   }

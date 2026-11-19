@@ -22,6 +22,11 @@
 - A pre-draw shown claim is an expiring lease, separate from the durable shown record. `didDraw` finalizes it, while a reload, crash, or hard navigation before draw leaves only a stale lease that a later page can recover.
 - A live lease is kept distinct from a finalized shown record. The popup remains in the waiting snapshot and selection retries at lease expiry, so an immediate reload does not discard an un-impressed campaign.
 - Overlapping event flush requests are coalesced per session. Only one queue snapshot is sent at a time, followed by a serialized pass for events queued while that request was in flight.
+- Events fall back to a deduplicated in-memory queue when `localStorage` is denied or full, so impressions, clicks, and dismissals can still be sent during that page session.
+- A coalesced event flush that remains pending when an in-flight POST fails is rescheduled instead of being stranded after its original timer fired.
+- Selection preloads an image only when that layout and size render it, so an unused slow URL cannot delay or expire a toast, bottom sheet, or IAB modal.
+- Mobile bottom-sheet content includes the bottom safe-area inset, keeping its final CTA above the home indicator.
+- Tappable images have an accessible name from their alt text, including gradient-backed images that do not render an `img` element.
 - Banners and toasts announce their text in a polite live region and leave focus where it is, so a screen reader hears a short-lived toast instead of missing it.
 - Fixed banners honor the top, bottom, left, and right CSS safe-area insets, so their text and controls stay clear of notches, status areas, and home indicators.
 - Top-right and bottom-right toasts include the applicable CSS safe-area offsets and constrain their available width between the left and right insets.

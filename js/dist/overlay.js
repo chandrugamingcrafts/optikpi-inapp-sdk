@@ -92,7 +92,7 @@ function PopupImageView({ image, tappable, onTap, placeholder, radius, }) {
     const clipped = (_jsx("div", { style: { width: "100%", height: "100%", overflow: "hidden", borderRadius: radius }, children: body }));
     if (!tappable)
         return clipped;
-    return (_jsx("button", { type: "button", onClick: onTap, style: {
+    return (_jsx("button", { type: "button", onClick: onTap, "aria-label": image.alt?.trim() || "Image", style: {
             padding: 0,
             border: "none",
             background: "transparent",
