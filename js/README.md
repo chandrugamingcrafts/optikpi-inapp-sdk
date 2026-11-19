@@ -79,8 +79,9 @@ Notes:
   origin on the gateway, or proxy `GET /v1/inapp/popups` and `POST /ingest/popup` through your server
   and pass that proxy as `baseUrl`.
 - `OptikpiInApp.debug = true` logs what the SDK does with the prefix `[OptikpiInApp]`.
-- A hidden tab does not fetch or send. When it becomes visible, or the page is restored from
-  the back-forward cache, the SDK does both. You do not call `onForeground` for that.
+- A hidden tab does not fetch, show a popup, or send events. When it becomes visible, or the
+  page is restored from the back-forward cache, the SDK does all three. You do not call
+  `onForeground` for that.
 
 ## Files
 

@@ -1,5 +1,7 @@
 import type { InAppPopup } from "./parse.js";
 export declare function isRouteBlocked(route: string | null, blockedRoutes: string[]): boolean;
+/** True when `expiresAt` is set and `now` is not still before it. */
+export declare function isPopupExpired(popup: InAppPopup, now: Date): boolean;
 export declare function pickPopupToShow(args: {
     waiting: InAppPopup[];
     shownIds: Set<string>;

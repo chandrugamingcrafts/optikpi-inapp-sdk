@@ -1,6 +1,6 @@
 import { fetchPopups, PopupHttpException, sendEvents } from "./http.js";
 import { inAppLog } from "./log.js";
-import { FetchThrottle, isRouteBlocked, pickPopupToShow } from "./rules.js";
+import { FetchThrottle, isPopupExpired, isRouteBlocked, pickPopupToShow } from "./rules.js";
 import { claimShown, enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage.js";
 import { readPlayerTokenClaims } from "./token.js";
 const IMAGE_WAIT_MS = 10000;
@@ -205,11 +205,12 @@ export class OptikpiInAppController {
             return;
         void this.flush(session);
         this.fetchMoment();
+        this.showMoment();
     }
     /**
-     * A hidden tab skips fetch and flush, and nothing else asks the host to call
-     * `onForeground`. The page does that when it is shown again, or restored from
-     * the back-forward cache. Both events in one turn resume once.
+     * A hidden tab skips fetch, popup selection and flush. The page resumes all three
+     * when it is shown again, or restored from the back-forward cache. Both events
+     * in one turn resume once.
      */
     bindLifecycle() {
         if (this.lifecycleBound || typeof document === "undefined" || typeof window === "undefined") {
@@ -412,6 +413,10 @@ export class OptikpiInAppController {
             this.pickAgain = true;
             return;
         }
+        // A fetch or route change can land while the tab is hidden. Claiming then
+        // would spend the once-per-device popup on a message nobody saw.
+        if (!this.inForeground())
+            return;
         if (this.shownThisVisit || this.current)
             return;
         this.picking = true;
@@ -434,12 +439,19 @@ export class OptikpiInAppController {
                     new Promise((resolve) => setTimeout(resolve, IMAGE_WAIT_MS)),
                 ]);
             }
+            if (next && isPopupExpired(next, new Date())) {
+                inAppLog(`skip ${next.id}: expired while its image loaded`);
+                session.waiting = session.waiting.filter((popup) => popup.id !== next.id);
+                next = null;
+                this.pickAgain = true;
+            }
             if (next &&
                 this.session === session &&
                 visit === this.visit &&
                 !this.pickAgain &&
                 !this.shownThisVisit &&
-                !this.current) {
+                !this.current &&
+                this.inForeground()) {
                 // Claim before setCurrent. didDraw marks the id only after paint, which is
                 // too late: the other tab can pass loadShownIds and draw the same popup.
                 claimed = await claimShown(next.id);

@@ -24,6 +24,11 @@ export function isRouteBlocked(route: string | null, blockedRoutes: string[]): b
   return false;
 }
 
+/** True when `expiresAt` is set and `now` is not still before it. */
+export function isPopupExpired(popup: InAppPopup, now: Date): boolean {
+  return popup.expiresAt != null && !(now < popup.expiresAt);
+}
+
 export function pickPopupToShow(args: {
   waiting: InAppPopup[];
   shownIds: Set<string>;
@@ -36,7 +41,7 @@ export function pickPopupToShow(args: {
   let best: InAppPopup | null = null;
   for (const popup of waiting) {
     if (shownIds.has(popup.id)) continue;
-    if (popup.expiresAt && !(now < popup.expiresAt)) continue;
+    if (isPopupExpired(popup, now)) continue;
     if (!best || popup.createdAt > best.createdAt) best = popup;
   }
   return best;

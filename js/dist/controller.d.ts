@@ -43,9 +43,9 @@ export declare class OptikpiInAppController {
     didChangeRoute(route: string | null): void;
     onForeground(): void;
     /**
-     * A hidden tab skips fetch and flush, and nothing else asks the host to call
-     * `onForeground`. The page does that when it is shown again, or restored from
-     * the back-forward cache. Both events in one turn resume once.
+     * A hidden tab skips fetch, popup selection and flush. The page resumes all three
+     * when it is shown again, or restored from the back-forward cache. Both events
+     * in one turn resume once.
      */
     private bindLifecycle;
     private unbindLifecycle;

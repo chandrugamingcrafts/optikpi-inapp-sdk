@@ -568,7 +568,10 @@ function PopupCard({
         >
           <div style={{ width: 40, height: 4, borderRadius: 2, background: "#D1D5DB", margin: "8px auto 0" }} />
           {image && content.size !== "sm" ? (
-            <div className="optikpi-hero" style={{ height: desktop ? 180 : 160, margin: "12px 16px 0" }}>
+            <div
+              className="optikpi-hero"
+              style={{ height: desktop ? 180 : 160, margin: "12px 16px 0", width: "auto" }}
+            >
               <PopupImageView
                 image={image}
                 tappable={Boolean(image.tapAction)}

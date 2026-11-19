@@ -8,11 +8,13 @@
 - The overlay reads `controller.current` with `useSyncExternalStore`, so a popup that arrives while the component is mounting is still drawn.
 - JWT payloads are decoded as UTF-8, so a non-ASCII `sub` or `wid` matches a token that JSON-escaped the same characters.
 - Built modules import each other with `.js` extensions, so `import("optikpi_inapp")` loads under Node's native ESM.
-- A hidden tab's skipped fetch and event flush run when the tab becomes visible, or the page is restored from the back-forward cache. Hosts do not call `onForeground` for that.
+- A hidden tab's skipped fetch, popup selection and event flush run when the tab becomes visible, or the page is restored from the back-forward cache. A popup is not claimed while the tab is hidden. Hosts do not call `onForeground` for that.
 - Each shown popup id is stored under its own `localStorage` key, so two tabs cannot drop each other's once-per-device record.
 - An image-only card shrinks to the viewport height as well as the width, so the close button stays on screen in a short or landscape window.
 - A modal, bottom sheet, or image-only popup moves focus inside itself, marks the rest of the page inert, and restores focus when it closes.
 - A popup id is claimed across tabs before it is drawn, so two visible tabs do not show the same once-per-device message.
+- After an image finishes loading, `expiresAt` is checked again before the popup id is claimed, so a campaign that expired during the wait is not shown.
+- A bottom-sheet image keeps its side margins without extending past the panel, so the sheet does not scroll sideways.
 - `fullscreen` is not drawn. A popup with that layout is rejected while parsing, so it shows nothing and sends no events.
 
 ## 0.1.0
