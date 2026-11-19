@@ -84,23 +84,49 @@ export function markShown(id: string): void {
 }
 
 /**
- * Records [id] before a popup is drawn. False when another tab already claimed it.
- * A storage failure still returns true, so a quota error does not hide the popup.
+ * - `claimed`: this call wrote the id. Give it back with `releaseShown` if the popup is not drawn.
+ * - `unstored`: nothing could be written (no storage, or a quota error). Show the popup anyway;
+ *   there is nothing to give back.
+ * - `taken`: another tab already claimed the id.
+ * - `stale`: `stillValid` was false once the lock was held, so nothing was written.
  */
-export function claimShown(id: string): Promise<boolean> {
-  const storage = localStorageOrNull();
-  if (!storage || !id) return Promise.resolve(true);
-  const run = () => {
-    try {
-      return writeShown(storage, id);
-    } catch (error) {
-      inAppLog(`could not claim shown id: ${error}`);
-      return true;
-    }
-  };
+export type ClaimResult = "claimed" | "unstored" | "taken" | "stale";
+
+function withShownLock<T>(run: () => T): Promise<T> {
   const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
   if (!locks) return Promise.resolve(run());
   return locks.request(SHOWN_LOCK, run);
+}
+
+/**
+ * Records [id] before a popup is drawn. Waiting for the lock can take a while, so
+ * `stillValid` runs once the lock is held and before anything is written: a route,
+ * session or tab change in the meantime must not leave an id marked shown for a
+ * popup that never appears.
+ */
+export function claimShown(id: string, stillValid: () => boolean = () => true): Promise<ClaimResult> {
+  const storage = localStorageOrNull();
+  if (!storage || !id) return Promise.resolve(stillValid() ? "unstored" : "stale");
+  return withShownLock<ClaimResult>(() => {
+    if (!stillValid()) return "stale";
+    try {
+      return writeShown(storage, id) ? "claimed" : "taken";
+    } catch (error) {
+      inAppLog(`could not claim shown id: ${error}`);
+      return "unstored";
+    }
+  });
+}
+
+/** Takes back a `claimed` id that was never drawn, so a later visit can still show it. */
+export async function releaseShown(id: string): Promise<void> {
+  const storage = localStorageOrNull();
+  if (!storage || !id) return;
+  try {
+    await withShownLock(() => storage.removeItem(shownKey(id)));
+  } catch (error) {
+    inAppLog(`could not release shown id: ${error}`);
+  }
 }
 
 export type QueuedEvent = {

@@ -82,27 +82,45 @@ export function markShown(id) {
         inAppLog(`could not remember shown id: ${error}`);
     }
 }
-/**
- * Records [id] before a popup is drawn. False when another tab already claimed it.
- * A storage failure still returns true, so a quota error does not hide the popup.
- */
-export function claimShown(id) {
-    const storage = localStorageOrNull();
-    if (!storage || !id)
-        return Promise.resolve(true);
-    const run = () => {
-        try {
-            return writeShown(storage, id);
-        }
-        catch (error) {
-            inAppLog(`could not claim shown id: ${error}`);
-            return true;
-        }
-    };
+function withShownLock(run) {
     const locks = typeof navigator !== "undefined" ? navigator.locks : undefined;
     if (!locks)
         return Promise.resolve(run());
     return locks.request(SHOWN_LOCK, run);
+}
+/**
+ * Records [id] before a popup is drawn. Waiting for the lock can take a while, so
+ * `stillValid` runs once the lock is held and before anything is written: a route,
+ * session or tab change in the meantime must not leave an id marked shown for a
+ * popup that never appears.
+ */
+export function claimShown(id, stillValid = () => true) {
+    const storage = localStorageOrNull();
+    if (!storage || !id)
+        return Promise.resolve(stillValid() ? "unstored" : "stale");
+    return withShownLock(() => {
+        if (!stillValid())
+            return "stale";
+        try {
+            return writeShown(storage, id) ? "claimed" : "taken";
+        }
+        catch (error) {
+            inAppLog(`could not claim shown id: ${error}`);
+            return "unstored";
+        }
+    });
+}
+/** Takes back a `claimed` id that was never drawn, so a later visit can still show it. */
+export async function releaseShown(id) {
+    const storage = localStorageOrNull();
+    if (!storage || !id)
+        return;
+    try {
+        await withShownLock(() => storage.removeItem(shownKey(id)));
+    }
+    catch (error) {
+        inAppLog(`could not release shown id: ${error}`);
+    }
 }
 function parseQueued(raw) {
     try {

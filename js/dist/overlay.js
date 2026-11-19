@@ -3,7 +3,7 @@ import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, } from "react";
 import { controller } from "./controller.js";
 import "./overlay.css";
-import { gradientStops, isDarkBackground, isGradientUrl, } from "./parse.js";
+import { colorWithAlpha, gradientStops, isDarkBackground, isGradientUrl, } from "./parse.js";
 const DESKTOP = 768;
 function useViewport() {
     const [size, setSize] = useState(() => typeof window === "undefined"
@@ -88,7 +88,7 @@ function PopupImageView({ image, tappable, onTap, placeholder, radius, }) {
             background: `linear-gradient(135deg, ${gradientStops(image.url).join(", ")})`,
         } })) : (
     // eslint-disable-next-line @next/next/no-img-element
-    _jsx("img", { src: image.url, alt: image.alt ?? "", style: { width: "100%", height: "100%", objectFit: "cover", background: `${placeholder}14` } }));
+    _jsx("img", { src: image.url, alt: image.alt ?? "", style: { width: "100%", height: "100%", objectFit: "cover", background: colorWithAlpha(placeholder, 0x14 / 0xff) } }));
     const clipped = (_jsx("div", { style: { width: "100%", height: "100%", overflow: "hidden", borderRadius: radius }, children: body }));
     if (!tappable)
         return clipped;
@@ -112,7 +112,7 @@ function Buttons({ buttons, content, compact, onButton, }) {
             return (_jsx("button", { type: "button", onClick: () => onButton(index), style: {
                     padding: compact ? "6px 12px" : undefined,
                     borderRadius: compact ? 8 : undefined,
-                    border: primary ? "none" : `1px solid ${content.theme.text}33`,
+                    border: primary ? "none" : `1px solid ${colorWithAlpha(content.theme.text, 0x33 / 0xff)}`,
                     background: primary ? content.theme.primary : "transparent",
                     color: primary ? "#fff" : content.theme.text,
                     fontWeight: compact ? 600 : undefined,
@@ -275,6 +275,7 @@ function PopupCard({ active, desktop, screenWidth, screenHeight, }) {
                 pointerEvents: "none",
             }, children: _jsxs("div", { style: {
                     pointerEvents: "auto",
+                    boxSizing: "border-box",
                     width: bannerWidth,
                     height: iab ? bannerWidth * (50 / 320) : undefined,
                     background: content.theme.background,

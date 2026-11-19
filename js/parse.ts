@@ -203,20 +203,38 @@ export function gradientStops(url: string): [string, string] {
   return [from, to];
 }
 
-export function isDarkBackground(background: string): boolean {
-  let hex = background.replace("#", "");
+function rgbChannels(color: string): [number, number, number] | null {
+  let hex = color.startsWith("#") ? color.slice(1) : color;
+  if (!/^[0-9A-Fa-f]+$/.test(hex)) return null;
   if (hex.length === 3) {
     hex = hex
       .split("")
-      .map((c) => c + c)
+      .map((channel) => channel + channel)
       .join("");
   }
   if (hex.length === 8) hex = hex.slice(0, 6);
-  if (hex.length !== 6) return false;
-  const r = parseInt(hex.slice(0, 2), 16);
-  const g = parseInt(hex.slice(2, 4), 16);
-  const b = parseInt(hex.slice(4, 6), 16);
+  if (hex.length !== 6) return null;
+  return [
+    parseInt(hex.slice(0, 2), 16),
+    parseInt(hex.slice(2, 4), 16),
+    parseInt(hex.slice(4, 6), 16),
+  ];
+}
+
+export function isDarkBackground(background: string): boolean {
+  const channels = rgbChannels(background);
+  if (!channels) return false;
+  const [r, g, b] = channels;
   return r * 0.299 + g * 0.587 + b * 0.114 < 140;
+}
+
+/** CSS color with `alpha` (0–1) applied to a parsed `#RGB`, `#RRGGBB`, or `#RRGGBBAA` color. */
+export function colorWithAlpha(color: string, alpha: number): string {
+  const channels = rgbChannels(color);
+  if (!channels) return color;
+  const [r, g, b] = channels;
+  const opacity = Math.min(1, Math.max(0, alpha));
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
 }
 
 export function parsePopupContent(json: unknown): PopupContent | null {

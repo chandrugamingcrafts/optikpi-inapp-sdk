@@ -1,7 +1,7 @@
 import { fetchPopups, PopupHttpException, sendEvents } from "./http.js";
 import { inAppLog } from "./log.js";
 import { FetchThrottle, isPopupExpired, isRouteBlocked, pickPopupToShow } from "./rules.js";
-import { claimShown, enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage.js";
+import { claimShown, enqueueEvent, loadShownIds, markShown, queuedFor, releaseShown, removeQueued, } from "./storage.js";
 import { readPlayerTokenClaims } from "./token.js";
 const IMAGE_WAIT_MS = 10000;
 const FLUSH_DELAY_MS = 2000;
@@ -423,7 +423,24 @@ export class OptikpiInAppController {
         this.pickAgain = false;
         const visit = this.visit;
         let next = null;
-        let claimed = false;
+        let claim = null;
+        // True while nothing has changed since this pick began. Checked before the claim
+        // and again inside its lock, where a wait for another tab can span a route change.
+        const stillValid = () => this.session === session &&
+            visit === this.visit &&
+            !this.pickAgain &&
+            !this.shownThisVisit &&
+            !this.current &&
+            this.inForeground();
+        let claimedId = null;
+        const giveBack = () => {
+            if (!claimedId)
+                return;
+            const id = claimedId;
+            claimedId = null;
+            inAppLog(`release ${id}: not shown`);
+            void releaseShown(id);
+        };
         try {
             next = pickPopupToShow({
                 waiting: session.waiting,
@@ -445,17 +462,13 @@ export class OptikpiInAppController {
                 next = null;
                 this.pickAgain = true;
             }
-            if (next &&
-                this.session === session &&
-                visit === this.visit &&
-                !this.pickAgain &&
-                !this.shownThisVisit &&
-                !this.current &&
-                this.inForeground()) {
+            if (next && stillValid()) {
                 // Claim before setCurrent. didDraw marks the id only after paint, which is
                 // too late: the other tab can pass loadShownIds and draw the same popup.
-                claimed = await claimShown(next.id);
-                if (!claimed) {
+                claim = await claimShown(next.id, stillValid);
+                if (claim === "claimed")
+                    claimedId = next.id;
+                if (claim === "taken") {
                     inAppLog(`skip ${next.id}: another tab claimed it`);
                     session.waiting = session.waiting.filter((popup) => popup.id !== next.id);
                     next = null;
@@ -466,20 +479,30 @@ export class OptikpiInAppController {
         catch (error) {
             inAppLog(`pick failed: ${error}`);
             next = null;
+            giveBack();
         }
         finally {
             this.picking = false;
         }
         if (this.session !== session) {
+            giveBack();
             if (this.pickAgain)
                 this.showMoment();
             return;
         }
         if (visit !== this.visit || this.pickAgain) {
+            giveBack();
             return this.maybeShow(session);
         }
-        if (!next || !claimed || this.shownThisVisit || this.current)
+        if (!next ||
+            (claim !== "claimed" && claim !== "unstored") ||
+            this.shownThisVisit ||
+            this.current ||
+            !this.inForeground()) {
+            giveBack();
             return;
+        }
+        claimedId = null;
         this.shownThisVisit = true;
         session.waiting = session.waiting.filter((popup) => popup.id !== next.id);
         inAppLog(`show ${next.id} (${next.content.layout}) on ${this.route}`);

@@ -59,6 +59,8 @@ export type PopupFetchResult = {
 export declare function isGradientUrl(url: string): boolean;
 export declare function gradientStops(url: string): [string, string];
 export declare function isDarkBackground(background: string): boolean;
+/** CSS color with `alpha` (0–1) applied to a parsed `#RGB`, `#RRGGBB`, or `#RRGGBBAA` color. */
+export declare function colorWithAlpha(color: string, alpha: number): string;
 export declare function parsePopupContent(json: unknown): PopupContent | null;
 export declare function parseInAppPopup(json: unknown): InAppPopup | null;
 export declare function parseFetchResult(json: unknown): PopupFetchResult;

@@ -15,6 +15,9 @@
 - A popup id is claimed across tabs before it is drawn, so two visible tabs do not show the same once-per-device message.
 - After an image finishes loading, `expiresAt` is checked again before the popup id is claimed, so a campaign that expired during the wait is not shown.
 - A bottom-sheet image keeps its side margins without extending past the panel, so the sheet does not scroll sideways.
+- The shown-id claim rechecks route, session and tab state once it holds the cross-tab lock, and an id claimed for a popup that is then not drawn is released, so a once-per-device campaign is not lost to a change during the wait.
+- An `iab_320x50` banner uses `border-box`, so its 12px side padding stays inside the 320×50 size instead of widening the card to 344px.
+- Secondary button borders and image placeholders apply transparency to the parsed theme color, so `#RGB` and `#RRGGBBAA` stay valid CSS instead of becoming `#fff33` or `#1018288033`.
 - `fullscreen` is not drawn. A popup with that layout is rejected while parsing, so it shows nothing and sends no events.
 
 ## 0.1.0
