@@ -1,19 +1,21 @@
 "use client";
 import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { controller } from "./controller";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, } from "react";
+import { controller } from "./controller.js";
 import "./overlay.css";
-import { gradientStops, isDarkBackground, isGradientUrl, popupBlocksPage, } from "./parse";
+import { gradientStops, isDarkBackground, isGradientUrl, } from "./parse.js";
 const DESKTOP = 768;
 function useViewport() {
-    const [width, setWidth] = useState(() => typeof window === "undefined" ? DESKTOP : window.innerWidth);
+    const [size, setSize] = useState(() => typeof window === "undefined"
+        ? { width: DESKTOP, height: 800 }
+        : { width: window.innerWidth, height: window.innerHeight });
     useEffect(() => {
-        const update = () => setWidth(window.innerWidth);
+        const update = () => setSize({ width: window.innerWidth, height: window.innerHeight });
         update();
         window.addEventListener("resize", update);
         return () => window.removeEventListener("resize", update);
     }, []);
-    return { width, desktop: width >= DESKTOP };
+    return { width: size.width, height: size.height, desktop: size.width >= DESKTOP };
 }
 function themeVars(content) {
     return {
@@ -23,6 +25,18 @@ function themeVars(content) {
         ["--popup-text"]: content.theme.text,
         ["--popup-radius"]: `${content.theme.radius}px`,
     };
+}
+/** Shrinks a fixed-ratio card so both sides stay inside the viewport. `ratio` is width / height. */
+function fitRatio(width, ratio, screenWidth, screenHeight) {
+    const maxWidth = Math.max(0, screenWidth);
+    const maxHeight = Math.max(0, screenHeight) * 0.9;
+    let nextWidth = Math.min(width, maxWidth);
+    let nextHeight = nextWidth / ratio;
+    if (nextHeight > maxHeight) {
+        nextHeight = maxHeight;
+        nextWidth = nextHeight * ratio;
+    }
+    return { width: nextWidth, height: nextHeight };
 }
 function cardWidth(size, desktop, screenWidth) {
     switch (size) {
@@ -119,6 +133,117 @@ function TextBlock({ content, titleSize = 16, bodySize = 14, fluid = false, }) {
                     opacity: 0.8,
                 }, children: content.body })) : null] }));
 }
+const TABBABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+function dialogLabel(content) {
+    const title = content.title?.trim();
+    if (title)
+        return title;
+    const alt = content.image?.alt?.trim();
+    if (alt)
+        return alt;
+    return "Pop-up";
+}
+function tabbable(root) {
+    return [...root.querySelectorAll(TABBABLE)].filter((el) => {
+        if (el.getAttribute("aria-hidden") === "true")
+            return false;
+        const style = window.getComputedStyle(el);
+        return style.display !== "none" && style.visibility !== "hidden";
+    });
+}
+/** Marks every element outside the dialog inert, including siblings of its ancestors. */
+function isolateBackground(dialog) {
+    const touched = [];
+    let node = dialog;
+    while (node && node !== document.body) {
+        const parent = node.parentElement;
+        if (!parent)
+            break;
+        for (const child of parent.children) {
+            if (child === node || !(child instanceof HTMLElement))
+                continue;
+            if (child.inert || child.getAttribute("aria-hidden") === "true")
+                continue;
+            child.inert = true;
+            child.setAttribute("aria-hidden", "true");
+            touched.push(child);
+        }
+        node = parent;
+    }
+    return () => {
+        for (const el of touched) {
+            el.inert = false;
+            el.removeAttribute("aria-hidden");
+        }
+    };
+}
+function moveFocusInside(dialog) {
+    const [first] = tabbable(dialog);
+    (first ?? dialog).focus();
+}
+function trapTab(dialog, event) {
+    if (event.key !== "Tab")
+        return;
+    const items = tabbable(dialog);
+    if (items.length === 0) {
+        event.preventDefault();
+        dialog.focus();
+        return;
+    }
+    const first = items[0];
+    const last = items[items.length - 1];
+    const current = document.activeElement;
+    if (event.shiftKey) {
+        if (current === first || current === dialog || !dialog.contains(current)) {
+            event.preventDefault();
+            last.focus();
+        }
+        return;
+    }
+    if (current === last) {
+        event.preventDefault();
+        first.focus();
+    }
+}
+function BlockingFrame({ active, className, style, children, }) {
+    const ref = useRef(null);
+    useEffect(() => {
+        const dialog = ref.current;
+        if (!dialog)
+            return;
+        const previouslyFocused = document.activeElement;
+        const restoreBackground = isolateBackground(dialog);
+        const previousOverflow = document.body.style.overflow;
+        document.body.style.overflow = "hidden";
+        moveFocusInside(dialog);
+        const onKey = (event) => {
+            if (event.key === "Escape") {
+                controller.close(active, true);
+                return;
+            }
+            trapTab(dialog, event);
+        };
+        const onFocusIn = (event) => {
+            if (event.target instanceof Node && dialog.contains(event.target))
+                return;
+            moveFocusInside(dialog);
+        };
+        document.addEventListener("keydown", onKey);
+        document.addEventListener("focusin", onFocusIn);
+        return () => {
+            document.removeEventListener("keydown", onKey);
+            document.removeEventListener("focusin", onFocusIn);
+            document.body.style.overflow = previousOverflow;
+            restoreBackground();
+            if (previouslyFocused instanceof HTMLElement &&
+                previouslyFocused !== document.body &&
+                document.contains(previouslyFocused)) {
+                previouslyFocused.focus();
+            }
+        };
+    }, [active]);
+    return (_jsx("div", { ref: ref, className: className, style: { outline: "none", ...style }, role: "dialog", "aria-modal": "true", "aria-label": dialogLabel(active.popup.content), tabIndex: -1, children: children }));
+}
 function OverlayScrim({ content, onOutside }) {
     return (_jsx("div", { onClick: content.close.tapOutsideToClose ? onOutside : undefined, style: {
             position: "absolute",
@@ -126,9 +251,9 @@ function OverlayScrim({ content, onOutside }) {
             background: `rgba(0,0,0,${content.theme.overlayOpacity})`,
         } }));
 }
-function PopupCard({ active, desktop, }) {
+function PopupCard({ active, desktop, screenWidth, screenHeight, }) {
     const content = active.popup.content;
-    const width = typeof window === "undefined" ? 1280 : window.innerWidth;
+    const width = screenWidth;
     const dark = isDarkBackground(content.theme.background);
     const onClose = () => controller.close(active, true);
     const onButton = (index) => controller.tapButton(active, index);
@@ -182,18 +307,19 @@ function PopupCard({ active, desktop, }) {
             }, children: [showImage && image ? (_jsx("div", { style: { width: 64, flexShrink: 0 }, children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text }) })) : null, _jsxs("div", { style: { padding: "12px 32px 12px 12px", flex: 1 }, children: [_jsx(TextBlock, { content: content, titleSize: 14, bodySize: 12 }), content.buttons.length ? (_jsx("div", { style: { marginTop: 8 }, children: _jsx(Buttons, { buttons: content.buttons, content: content, compact: true, onButton: onButton }) })) : null] }), _jsx(CloseButton, { content: content, dark: dark, onClose: onClose })] }));
     }
     if (content.layout === "bottomSheet") {
-        return (_jsxs("div", { className: "optikpi-inapp optikpi-stage", children: [_jsx(OverlayScrim, { content: content, onOutside: onClose }), _jsxs("div", { className: "optikpi-sheet-panel optikpi-card", "data-size": content.size, style: { ...themeVars(content), overflow: "auto" }, children: [_jsx("div", { style: { width: 40, height: 4, borderRadius: 2, background: "#D1D5DB", margin: "8px auto 0" } }), image && content.size !== "sm" ? (_jsx("div", { className: "optikpi-hero", style: { height: desktop ? 180 : 160, margin: "12px 16px 0" }, children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text, radius: 8 }) })) : null, _jsxs("div", { className: "optikpi-body", children: [_jsx(TextBlock, { content: content, fluid: true }), _jsx(Buttons, { buttons: content.buttons, content: content, onButton: onButton })] }), _jsx(CloseButton, { content: content, dark: dark, onClose: onClose })] })] }));
+        return (_jsxs(BlockingFrame, { active: active, className: "optikpi-inapp optikpi-stage", children: [_jsx(OverlayScrim, { content: content, onOutside: onClose }), _jsxs("div", { className: "optikpi-sheet-panel optikpi-card", "data-size": content.size, style: { ...themeVars(content), overflow: "auto" }, children: [_jsx("div", { style: { width: 40, height: 4, borderRadius: 2, background: "#D1D5DB", margin: "8px auto 0" } }), image && content.size !== "sm" ? (_jsx("div", { className: "optikpi-hero", style: { height: desktop ? 180 : 160, margin: "12px 16px 0" }, children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text, radius: 8 }) })) : null, _jsxs("div", { className: "optikpi-body", children: [_jsx(TextBlock, { content: content, fluid: true }), _jsx(Buttons, { buttons: content.buttons, content: content, onButton: onButton })] }), _jsx(CloseButton, { content: content, dark: dark, onClose: onClose })] })] }));
     }
     if (content.layout === "imageOnly") {
         const iab = content.size === "iab_300x250";
-        const w = cardWidth(content.size, desktop, width);
         const ratio = iab ? 300 / 250 : 4 / 5;
-        return (_jsxs("div", { style: { position: "fixed", inset: 0, zIndex: 10050 }, children: [_jsx(OverlayScrim, { content: content, onOutside: onClose }), _jsxs("div", { style: {
+        const fitted = fitRatio(cardWidth(content.size, desktop, width), ratio, width, screenHeight);
+        const w = fitted.width;
+        return (_jsxs(BlockingFrame, { active: active, style: { position: "fixed", inset: 0, zIndex: 10050 }, children: [_jsx(OverlayScrim, { content: content, onOutside: onClose }), _jsxs("div", { style: {
                         position: "absolute",
                         left: "50%",
                         top: "50%",
                         width: w,
-                        height: w / ratio,
+                        height: fitted.height,
                         transform: "translate(-50%, -50%)",
                         borderRadius: content.theme.radius,
                         overflow: "hidden",
@@ -202,7 +328,7 @@ function PopupCard({ active, desktop, }) {
     }
     const iab = content.size === "iab_300x250";
     const buttons = iab ? content.buttons.slice(0, 1) : content.buttons;
-    return (_jsxs("div", { className: "optikpi-inapp optikpi-stage", children: [_jsx(OverlayScrim, { content: content, onOutside: onClose }), _jsxs("div", { className: "optikpi-modal optikpi-card", "data-size": content.size, style: themeVars(content), children: [image && !iab ? (_jsx("div", { className: "optikpi-hero", children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text }) })) : null, _jsxs("div", { className: "optikpi-body", style: iab ? { padding: 16 } : undefined, children: [_jsx(TextBlock, { content: content, fluid: true }), _jsx(Buttons, { buttons: buttons, content: content, onButton: onButton })] }), _jsx(CloseButton, { content: content, dark: dark || Boolean(image), onClose: onClose })] })] }));
+    return (_jsxs(BlockingFrame, { active: active, className: "optikpi-inapp optikpi-stage", children: [_jsx(OverlayScrim, { content: content, onOutside: onClose }), _jsxs("div", { className: "optikpi-modal optikpi-card", "data-size": content.size, style: themeVars(content), children: [image && !iab ? (_jsx("div", { className: "optikpi-hero", children: _jsx(PopupImageView, { image: image, tappable: Boolean(image.tapAction), onTap: onImage, placeholder: content.theme.text }) })) : null, _jsxs("div", { className: "optikpi-body", style: iab ? { padding: 16 } : undefined, children: [_jsx(TextBlock, { content: content, fluid: true }), _jsx(Buttons, { buttons: buttons, content: content, onButton: onButton })] }), _jsx(CloseButton, { content: content, dark: dark || Boolean(image), onClose: onClose })] })] }));
 }
 function subscribeActive(onChange) {
     return controller.subscribe(onChange);
@@ -215,7 +341,7 @@ function serverActive() {
 }
 export default function OptikpiInAppOverlay() {
     const active = useSyncExternalStore(subscribeActive, currentActive, serverActive);
-    const { width, desktop } = useViewport();
+    const { width, height, desktop } = useViewport();
     useEffect(() => {
         if (!active)
             return;
@@ -226,26 +352,11 @@ export default function OptikpiInAppOverlay() {
         const timer = window.setTimeout(() => controller.close(active, true), seconds * 1000);
         return () => window.clearTimeout(timer);
     }, [active]);
-    useEffect(() => {
-        if (!active || !popupBlocksPage(active.popup.content.layout))
-            return;
-        const previous = document.body.style.overflow;
-        document.body.style.overflow = "hidden";
-        const onKey = (event) => {
-            if (event.key === "Escape")
-                controller.close(active, true);
-        };
-        window.addEventListener("keydown", onKey);
-        return () => {
-            document.body.style.overflow = previous;
-            window.removeEventListener("keydown", onKey);
-        };
-    }, [active]);
     const card = useMemo(() => {
         if (!active)
             return null;
-        return _jsx(PopupCard, { active: active, desktop: desktop });
-    }, [active, desktop, width]);
+        return _jsx(PopupCard, { active: active, desktop: desktop, screenWidth: width, screenHeight: height });
+    }, [active, desktop, width, height]);
     return card;
 }
 export { OptikpiInAppOverlay };

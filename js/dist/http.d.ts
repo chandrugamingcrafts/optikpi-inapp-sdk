@@ -1,4 +1,4 @@
-import { type PopupFetchResult } from "./parse";
+import { type PopupFetchResult } from "./parse.js";
 export type PopupRequestContext = {
     baseUrl: string;
     workspaceId: string;

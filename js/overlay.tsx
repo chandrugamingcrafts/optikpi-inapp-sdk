@@ -1,32 +1,41 @@
 "use client";
 
-import { useEffect, useMemo, useState, useSyncExternalStore, type CSSProperties } from "react";
-import { controller, type ActivePopup } from "./controller";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
+import { controller, type ActivePopup } from "./controller.js";
 import "./overlay.css";
 import {
   gradientStops,
   isDarkBackground,
   isGradientUrl,
-  popupBlocksPage,
   type PopupButton,
   type PopupContent,
   type PopupImage,
   type PopupSize,
-} from "./parse";
+} from "./parse.js";
 
 const DESKTOP = 768;
 
 function useViewport() {
-  const [width, setWidth] = useState(() =>
-    typeof window === "undefined" ? DESKTOP : window.innerWidth
+  const [size, setSize] = useState(() =>
+    typeof window === "undefined"
+      ? { width: DESKTOP, height: 800 }
+      : { width: window.innerWidth, height: window.innerHeight }
   );
   useEffect(() => {
-    const update = () => setWidth(window.innerWidth);
+    const update = () => setSize({ width: window.innerWidth, height: window.innerHeight });
     update();
     window.addEventListener("resize", update);
     return () => window.removeEventListener("resize", update);
   }, []);
-  return { width, desktop: width >= DESKTOP };
+  return { width: size.width, height: size.height, desktop: size.width >= DESKTOP };
 }
 
 function themeVars(content: PopupContent): CSSProperties {
@@ -37,6 +46,24 @@ function themeVars(content: PopupContent): CSSProperties {
     ["--popup-text" as string]: content.theme.text,
     ["--popup-radius" as string]: `${content.theme.radius}px`,
   };
+}
+
+/** Shrinks a fixed-ratio card so both sides stay inside the viewport. `ratio` is width / height. */
+function fitRatio(
+  width: number,
+  ratio: number,
+  screenWidth: number,
+  screenHeight: number
+): { width: number; height: number } {
+  const maxWidth = Math.max(0, screenWidth);
+  const maxHeight = Math.max(0, screenHeight) * 0.9;
+  let nextWidth = Math.min(width, maxWidth);
+  let nextHeight = nextWidth / ratio;
+  if (nextHeight > maxHeight) {
+    nextHeight = maxHeight;
+    nextWidth = nextHeight * ratio;
+  }
+  return { width: nextWidth, height: nextHeight };
 }
 
 function cardWidth(size: PopupSize, desktop: boolean, screenWidth: number) {
@@ -248,6 +275,141 @@ function TextBlock({
   );
 }
 
+const TABBABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function dialogLabel(content: PopupContent): string {
+  const title = content.title?.trim();
+  if (title) return title;
+  const alt = content.image?.alt?.trim();
+  if (alt) return alt;
+  return "Pop-up";
+}
+
+function tabbable(root: HTMLElement): HTMLElement[] {
+  return [...root.querySelectorAll<HTMLElement>(TABBABLE)].filter((el) => {
+    if (el.getAttribute("aria-hidden") === "true") return false;
+    const style = window.getComputedStyle(el);
+    return style.display !== "none" && style.visibility !== "hidden";
+  });
+}
+
+/** Marks every element outside the dialog inert, including siblings of its ancestors. */
+function isolateBackground(dialog: HTMLElement): () => void {
+  const touched: HTMLElement[] = [];
+  let node: HTMLElement | null = dialog;
+  while (node && node !== document.body) {
+    const parent: HTMLElement | null = node.parentElement;
+    if (!parent) break;
+    for (const child of parent.children) {
+      if (child === node || !(child instanceof HTMLElement)) continue;
+      if (child.inert || child.getAttribute("aria-hidden") === "true") continue;
+      child.inert = true;
+      child.setAttribute("aria-hidden", "true");
+      touched.push(child);
+    }
+    node = parent;
+  }
+  return () => {
+    for (const el of touched) {
+      el.inert = false;
+      el.removeAttribute("aria-hidden");
+    }
+  };
+}
+
+function moveFocusInside(dialog: HTMLElement) {
+  const [first] = tabbable(dialog);
+  (first ?? dialog).focus();
+}
+
+function trapTab(dialog: HTMLElement, event: KeyboardEvent) {
+  if (event.key !== "Tab") return;
+  const items = tabbable(dialog);
+  if (items.length === 0) {
+    event.preventDefault();
+    dialog.focus();
+    return;
+  }
+  const first = items[0];
+  const last = items[items.length - 1];
+  const current = document.activeElement;
+  if (event.shiftKey) {
+    if (current === first || current === dialog || !dialog.contains(current)) {
+      event.preventDefault();
+      last.focus();
+    }
+    return;
+  }
+  if (current === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
+
+function BlockingFrame({
+  active,
+  className,
+  style,
+  children,
+}: {
+  active: ActivePopup;
+  className?: string;
+  style?: CSSProperties;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const dialog = ref.current;
+    if (!dialog) return;
+    const previouslyFocused = document.activeElement;
+    const restoreBackground = isolateBackground(dialog);
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    moveFocusInside(dialog);
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        controller.close(active, true);
+        return;
+      }
+      trapTab(dialog, event);
+    };
+    const onFocusIn = (event: FocusEvent) => {
+      if (event.target instanceof Node && dialog.contains(event.target)) return;
+      moveFocusInside(dialog);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("focusin", onFocusIn);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("focusin", onFocusIn);
+      document.body.style.overflow = previousOverflow;
+      restoreBackground();
+      if (
+        previouslyFocused instanceof HTMLElement &&
+        previouslyFocused !== document.body &&
+        document.contains(previouslyFocused)
+      ) {
+        previouslyFocused.focus();
+      }
+    };
+  }, [active]);
+
+  return (
+    <div
+      ref={ref}
+      className={className}
+      style={{ outline: "none", ...style }}
+      role="dialog"
+      aria-modal="true"
+      aria-label={dialogLabel(active.popup.content)}
+      tabIndex={-1}
+    >
+      {children}
+    </div>
+  );
+}
+
 function OverlayScrim({ content, onOutside }: { content: PopupContent; onOutside: () => void }) {
   return (
     <div
@@ -264,12 +426,16 @@ function OverlayScrim({ content, onOutside }: { content: PopupContent; onOutside
 function PopupCard({
   active,
   desktop,
+  screenWidth,
+  screenHeight,
 }: {
   active: ActivePopup;
   desktop: boolean;
+  screenWidth: number;
+  screenHeight: number;
 }) {
   const content = active.popup.content;
-  const width = typeof window === "undefined" ? 1280 : window.innerWidth;
+  const width = screenWidth;
   const dark = isDarkBackground(content.theme.background);
   const onClose = () => controller.close(active, true);
   const onButton = (index: number) => controller.tapButton(active, index);
@@ -393,7 +559,7 @@ function PopupCard({
 
   if (content.layout === "bottomSheet") {
     return (
-      <div className="optikpi-inapp optikpi-stage">
+      <BlockingFrame active={active} className="optikpi-inapp optikpi-stage">
         <OverlayScrim content={content} onOutside={onClose} />
         <div
           className="optikpi-sheet-panel optikpi-card"
@@ -418,16 +584,17 @@ function PopupCard({
           </div>
           <CloseButton content={content} dark={dark} onClose={onClose} />
         </div>
-      </div>
+      </BlockingFrame>
     );
   }
 
   if (content.layout === "imageOnly") {
     const iab = content.size === "iab_300x250";
-    const w = cardWidth(content.size, desktop, width);
     const ratio = iab ? 300 / 250 : 4 / 5;
+    const fitted = fitRatio(cardWidth(content.size, desktop, width), ratio, width, screenHeight);
+    const w = fitted.width;
     return (
-      <div style={{ position: "fixed", inset: 0, zIndex: 10050 }}>
+      <BlockingFrame active={active} style={{ position: "fixed", inset: 0, zIndex: 10050 }}>
         <OverlayScrim content={content} onOutside={onClose} />
         <div
           style={{
@@ -435,7 +602,7 @@ function PopupCard({
             left: "50%",
             top: "50%",
             width: w,
-            height: w / ratio,
+            height: fitted.height,
             transform: "translate(-50%, -50%)",
             borderRadius: content.theme.radius,
             overflow: "hidden",
@@ -452,14 +619,14 @@ function PopupCard({
           ) : null}
           <CloseButton content={content} dark onClose={onClose} />
         </div>
-      </div>
+      </BlockingFrame>
     );
   }
 
   const iab = content.size === "iab_300x250";
   const buttons = iab ? content.buttons.slice(0, 1) : content.buttons;
   return (
-    <div className="optikpi-inapp optikpi-stage">
+    <BlockingFrame active={active} className="optikpi-inapp optikpi-stage">
       <OverlayScrim content={content} onOutside={onClose} />
       <div
         className="optikpi-modal optikpi-card"
@@ -482,7 +649,7 @@ function PopupCard({
         </div>
         <CloseButton content={content} dark={dark || Boolean(image)} onClose={onClose} />
       </div>
-    </div>
+    </BlockingFrame>
   );
 }
 
@@ -500,7 +667,7 @@ function serverActive(): ActivePopup | null {
 
 export default function OptikpiInAppOverlay() {
   const active = useSyncExternalStore(subscribeActive, currentActive, serverActive);
-  const { width, desktop } = useViewport();
+  const { width, height, desktop } = useViewport();
 
   useEffect(() => {
     if (!active) return;
@@ -511,24 +678,10 @@ export default function OptikpiInAppOverlay() {
     return () => window.clearTimeout(timer);
   }, [active]);
 
-  useEffect(() => {
-    if (!active || !popupBlocksPage(active.popup.content.layout)) return;
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") controller.close(active, true);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = previous;
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [active]);
-
   const card = useMemo(() => {
     if (!active) return null;
-    return <PopupCard active={active} desktop={desktop} />;
-  }, [active, desktop, width]);
+    return <PopupCard active={active} desktop={desktop} screenWidth={width} screenHeight={height} />;
+  }, [active, desktop, width, height]);
 
   return card;
 }

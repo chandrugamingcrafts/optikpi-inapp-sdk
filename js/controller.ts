@@ -1,9 +1,9 @@
-import { fetchPopups, PopupHttpException, sendEvents, type PopupEvent, type PopupRequestContext } from "./http";
-import { inAppLog } from "./log";
-import type { InAppPopup, PopupAction, PopupContent } from "./parse";
-import { FetchThrottle, isRouteBlocked, pickPopupToShow } from "./rules";
-import { enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage";
-import { readPlayerTokenClaims } from "./token";
+import { fetchPopups, PopupHttpException, sendEvents, type PopupEvent, type PopupRequestContext } from "./http.js";
+import { inAppLog } from "./log.js";
+import type { InAppPopup, PopupAction, PopupContent } from "./parse.js";
+import { FetchThrottle, isRouteBlocked, pickPopupToShow } from "./rules.js";
+import { enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage.js";
+import { readPlayerTokenClaims } from "./token.js";
 
 export type PopupDeepLinkHandler = (link: string) => void;
 export type PopupCustomActionHandler = (data: Record<string, string>) => void;
@@ -61,6 +61,8 @@ export class OptikpiInAppController {
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private testCount = 0;
   private listeners = new Set<() => void>();
+  private lifecycleBound = false;
+  private resumeQueued = false;
 
   get isPaused() {
     return this.session?.paused ?? false;
@@ -136,6 +138,7 @@ export class OptikpiInAppController {
     inAppLog("logout");
     this.endSession(!(this.session?.paused ?? false));
     this.setup = null;
+    this.unbindLifecycle();
   }
 
   didChangeRoute(route: string | null) {
@@ -164,6 +167,48 @@ export class OptikpiInAppController {
     if (!session) return;
     void this.flush(session);
     this.fetchMoment();
+  }
+
+  /**
+   * A hidden tab skips fetch and flush, and nothing else asks the host to call
+   * `onForeground`. The page does that when it is shown again, or restored from
+   * the back-forward cache. Both events in one turn resume once.
+   */
+  private bindLifecycle() {
+    if (this.lifecycleBound || typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+    document.addEventListener("visibilitychange", this.onVisibility);
+    window.addEventListener("pageshow", this.onPageShow);
+    this.lifecycleBound = true;
+  }
+
+  private unbindLifecycle() {
+    if (!this.lifecycleBound || typeof document === "undefined" || typeof window === "undefined") {
+      return;
+    }
+    document.removeEventListener("visibilitychange", this.onVisibility);
+    window.removeEventListener("pageshow", this.onPageShow);
+    this.lifecycleBound = false;
+  }
+
+  private onVisibility = () => {
+    if (typeof document !== "undefined" && document.visibilityState === "visible") {
+      this.queueResume();
+    }
+  };
+
+  private onPageShow = (event: PageTransitionEvent) => {
+    if (event.persisted) this.queueResume();
+  };
+
+  private queueResume() {
+    if (this.resumeQueued) return;
+    this.resumeQueued = true;
+    queueMicrotask(() => {
+      this.resumeQueued = false;
+      this.onForeground();
+    });
   }
 
   showTest(content: PopupContent) {
@@ -225,6 +270,7 @@ export class OptikpiInAppController {
     this.shownThisVisit = false;
     this.picking = false;
     this.pickAgain = false;
+    this.unbindLifecycle();
   }
 
   private contextFor(setup: Setup, playerToken: string): PopupRequestContext | null {
@@ -262,6 +308,7 @@ export class OptikpiInAppController {
     if (playerKey !== this.lastPlayerKey) this.shownThisVisit = false;
     this.lastPlayerKey = playerKey;
     inAppLog(`init workspace ${context.workspaceId} player ${context.playerId}`);
+    this.bindLifecycle();
     void this.flush(session);
     this.fetchMoment();
   }

@@ -1,4 +1,4 @@
-import type { PopupEvent } from "./http";
+import type { PopupEvent } from "./http.js";
 export declare function loadShownIds(): Set<string>;
 export declare function markShown(id: string): void;
 export type QueuedEvent = {

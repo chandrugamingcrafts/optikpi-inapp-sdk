@@ -11,9 +11,10 @@ only to mount the overlay, which is a separate entry, `optikpi_inapp/overlay`.
 ## Integration
 
 The package name is `optikpi_inapp`. It is not on npm yet. `js/package.json` names it.
-`optikpi_inapp` resolves to `dist/index.js` (types in `dist/index.d.ts`). `optikpi_inapp/overlay`
-resolves to `dist/overlay.js`, which imports React and `dist/overlay.css`. A bundler such as
-Next.js, Vite or webpack loads whichever entry the app imports.
+`optikpi_inapp` resolves to `dist/index.js` (types in `dist/index.d.ts`). Relative imports in
+`dist/` end in `.js`, so Node can load this entry. `optikpi_inapp/overlay` resolves to
+`dist/overlay.js`, which imports React and `dist/overlay.css`, so that entry needs a bundler
+such as Next.js, Vite or webpack.
 
 **1. Install this folder as a dependency.** From the app that will show pop-ups:
 
@@ -74,6 +75,8 @@ Notes:
   origin on the gateway, or proxy `GET /v1/inapp/popups` and `POST /ingest/popup` through your server
   and pass that proxy as `baseUrl`.
 - `OptikpiInApp.debug = true` logs what the SDK does with the prefix `[OptikpiInApp]`.
+- A hidden tab does not fetch or send. When it becomes visible, or the page is restored from
+  the back-forward cache, the SDK does both. You do not call `onForeground` for that.
 
 ## Files
 
@@ -88,7 +91,7 @@ Notes:
 | `parse.ts` | Parses popups and applies the contract's fallbacks. |
 | `rules.ts` | Blocked routes, which popup to show, fetch throttle. |
 | `token.ts` | Reads `sub` and `wid` from the player token, unverified. |
-| `storage.ts` | `localStorage`: shown ids, one key per queued event, one key per dedupe. |
+| `storage.ts` | `localStorage`: one key per shown id, queued event, and dedupe key. |
 | `overlay.css` | Layout for the overlay. `overlay.tsx` imports it. |
 | `log.ts`, `version.ts` | Debug logging and SDK version. |
 

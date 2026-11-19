@@ -1,5 +1,5 @@
-import { type PopupRequestContext } from "./http";
-import type { InAppPopup, PopupContent } from "./parse";
+import { type PopupRequestContext } from "./http.js";
+import type { InAppPopup, PopupContent } from "./parse.js";
 export type PopupDeepLinkHandler = (link: string) => void;
 export type PopupCustomActionHandler = (data: Record<string, string>) => void;
 export type ActivePopup = {
@@ -30,6 +30,8 @@ export declare class OptikpiInAppController {
     private flushTimer;
     private testCount;
     private listeners;
+    private lifecycleBound;
+    private resumeQueued;
     get isPaused(): boolean;
     get currentRoute(): string | null;
     subscribe(listener: () => void): () => void;
@@ -40,6 +42,16 @@ export declare class OptikpiInAppController {
     logout(): Promise<void>;
     didChangeRoute(route: string | null): void;
     onForeground(): void;
+    /**
+     * A hidden tab skips fetch and flush, and nothing else asks the host to call
+     * `onForeground`. The page does that when it is shown again, or restored from
+     * the back-forward cache. Both events in one turn resume once.
+     */
+    private bindLifecycle;
+    private unbindLifecycle;
+    private onVisibility;
+    private onPageShow;
+    private queueResume;
     showTest(content: PopupContent): void;
     didDraw(active: ActivePopup): void;
     close(active: ActivePopup, dismissed: boolean): boolean;

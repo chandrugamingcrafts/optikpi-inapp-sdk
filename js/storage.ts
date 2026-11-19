@@ -1,7 +1,10 @@
-import { inAppLog } from "./log";
-import type { PopupEvent } from "./http";
+import { inAppLog } from "./log.js";
+import type { PopupEvent } from "./http.js";
 
-const SHOWN_KEY = "optikpi_inapp.shown";
+/** One shown popup id. The suffix is the id, so two tabs never share a list. */
+const SHOWN_PREFIX = "optikpi_inapp.s.";
+/** Earlier builds stored shown ids as one JSON list. Read once, then drop. */
+const LEGACY_SHOWN_KEY = "optikpi_inapp.shown";
 /** One pending event. The suffix is the dedupe key, so two tabs never share a list. */
 const PENDING_PREFIX = "optikpi_inapp.q.";
 /** One dedupe key. Kept after the event is sent so it is queued only once. */
@@ -25,30 +28,49 @@ function readList(key: string): string[] {
   }
 }
 
-/** Best-effort: quota or private mode must not break pop-up actions. */
-function writeList(key: string, value: string[]): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    window.localStorage.setItem(key, JSON.stringify(value));
-    return true;
-  } catch (error) {
-    inAppLog(`storage write failed (${key}): ${error}`);
-    return false;
+function shownKey(id: string): string {
+  return SHOWN_PREFIX + encodeURIComponent(id);
+}
+
+/**
+ * A JSON list is one read-modify-write. Two tabs can read the same snapshot and the
+ * later setItem drops the other tab's shown id, so that popup can appear again.
+ * Each id is its own key, so one tab's write cannot replace the other's.
+ */
+function migrateShown(storage: Storage): void {
+  if (storage.getItem(LEGACY_SHOWN_KEY) != null) {
+    readList(LEGACY_SHOWN_KEY).forEach((id, index) => {
+      remember(storage, shownKey(id), String(index).padStart(8, "0"));
+    });
+    storage.removeItem(LEGACY_SHOWN_KEY);
   }
+  trimOldest(storage, SHOWN_PREFIX, MAX_SHOWN, (key) => storage.getItem(key) ?? "", "");
 }
 
 export function loadShownIds(): Set<string> {
-  return new Set(readList(SHOWN_KEY));
+  const storage = localStorageOrNull();
+  if (!storage) return new Set();
+  try {
+    migrateShown(storage);
+  } catch (error) {
+    inAppLog(`could not read shown ids: ${error}`);
+  }
+  const ids = new Set<string>();
+  for (const key of keysWithPrefix(storage, SHOWN_PREFIX)) {
+    ids.add(decodeURIComponent(key.slice(SHOWN_PREFIX.length)));
+  }
+  return ids;
 }
 
 export function markShown(id: string): void {
+  const storage = localStorageOrNull();
+  if (!storage) return;
   try {
-    const ids = loadShownIds();
-    if (ids.has(id)) return;
-    ids.add(id);
-    let list = Array.from(ids);
-    if (list.length > MAX_SHOWN) list = list.slice(list.length - MAX_SHOWN);
-    writeList(SHOWN_KEY, list);
+    migrateShown(storage);
+    const key = shownKey(id);
+    if (storage.getItem(key) != null) return;
+    storage.setItem(key, new Date().toISOString());
+    trimOldest(storage, SHOWN_PREFIX, MAX_SHOWN, (item) => storage.getItem(item) ?? "", key);
   } catch (error) {
     inAppLog(`could not remember shown id: ${error}`);
   }

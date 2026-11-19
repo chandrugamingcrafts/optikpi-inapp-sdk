@@ -1,11 +1,11 @@
-import { controller, type InitOptions } from "./controller";
-import { inAppDebugLogging, setInAppDebugLogging } from "./log";
-import type { PopupContent } from "./parse";
+import { controller, type InitOptions } from "./controller.js";
+import { inAppDebugLogging, setInAppDebugLogging } from "./log.js";
+import type { PopupContent } from "./parse.js";
 
-export type { InitOptions, PopupCustomActionHandler, PopupDeepLinkHandler } from "./controller";
-export { parsePopupContent } from "./parse";
-export type { PopupContent } from "./parse";
-export { OPTIKPI_INAPP_JS_VERSION } from "./version";
+export type { InitOptions, PopupCustomActionHandler, PopupDeepLinkHandler } from "./controller.js";
+export { parsePopupContent } from "./parse.js";
+export type { PopupContent } from "./parse.js";
+export { OPTIKPI_INAPP_JS_VERSION } from "./version.js";
 
 export const OptikpiInApp = {
   get debug() {

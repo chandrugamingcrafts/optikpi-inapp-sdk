@@ -1,4 +1,4 @@
-import type { InAppPopup } from "./parse";
+import type { InAppPopup } from "./parse.js";
 export declare function isRouteBlocked(route: string | null, blockedRoutes: string[]): boolean;
 export declare function pickPopupToShow(args: {
     waiting: InAppPopup[];

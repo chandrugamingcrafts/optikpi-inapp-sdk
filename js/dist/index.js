@@ -1,7 +1,7 @@
-import { controller } from "./controller";
-import { inAppDebugLogging, setInAppDebugLogging } from "./log";
-export { parsePopupContent } from "./parse";
-export { OPTIKPI_INAPP_JS_VERSION } from "./version";
+import { controller } from "./controller.js";
+import { inAppDebugLogging, setInAppDebugLogging } from "./log.js";
+export { parsePopupContent } from "./parse.js";
+export { OPTIKPI_INAPP_JS_VERSION } from "./version.js";
 export const OptikpiInApp = {
     get debug() {
         return inAppDebugLogging;

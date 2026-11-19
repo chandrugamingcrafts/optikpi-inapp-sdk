@@ -1,6 +1,6 @@
-import { inAppLog } from "./log";
-import { parseFetchResult } from "./parse";
-import { SDK_VERSION_HEADER } from "./version";
+import { inAppLog } from "./log.js";
+import { parseFetchResult } from "./parse.js";
+import { SDK_VERSION_HEADER } from "./version.js";
 export class PopupHttpException extends Error {
     constructor(statusCode, path) {
         super(`HTTP ${statusCode} from ${path}`);

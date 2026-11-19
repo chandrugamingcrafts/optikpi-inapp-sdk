@@ -1,8 +1,8 @@
-import { fetchPopups, PopupHttpException, sendEvents } from "./http";
-import { inAppLog } from "./log";
-import { FetchThrottle, isRouteBlocked, pickPopupToShow } from "./rules";
-import { enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage";
-import { readPlayerTokenClaims } from "./token";
+import { fetchPopups, PopupHttpException, sendEvents } from "./http.js";
+import { inAppLog } from "./log.js";
+import { FetchThrottle, isRouteBlocked, pickPopupToShow } from "./rules.js";
+import { enqueueEvent, loadShownIds, markShown, queuedFor, removeQueued } from "./storage.js";
+import { readPlayerTokenClaims } from "./token.js";
 const IMAGE_WAIT_MS = 10000;
 const FLUSH_DELAY_MS = 2000;
 const BATCH_SIZE = 50;
@@ -80,6 +80,37 @@ export class OptikpiInAppController {
             writable: true,
             value: new Set()
         });
+        Object.defineProperty(this, "lifecycleBound", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: false
+        });
+        Object.defineProperty(this, "resumeQueued", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: false
+        });
+        Object.defineProperty(this, "onVisibility", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: () => {
+                if (typeof document !== "undefined" && document.visibilityState === "visible") {
+                    this.queueResume();
+                }
+            }
+        });
+        Object.defineProperty(this, "onPageShow", {
+            enumerable: true,
+            configurable: true,
+            writable: true,
+            value: (event) => {
+                if (event.persisted)
+                    this.queueResume();
+            }
+        });
     }
     get isPaused() {
         return this.session?.paused ?? false;
@@ -147,6 +178,7 @@ export class OptikpiInAppController {
         inAppLog("logout");
         this.endSession(!(this.session?.paused ?? false));
         this.setup = null;
+        this.unbindLifecycle();
     }
     didChangeRoute(route) {
         if (!route || route === this.route)
@@ -173,6 +205,36 @@ export class OptikpiInAppController {
             return;
         void this.flush(session);
         this.fetchMoment();
+    }
+    /**
+     * A hidden tab skips fetch and flush, and nothing else asks the host to call
+     * `onForeground`. The page does that when it is shown again, or restored from
+     * the back-forward cache. Both events in one turn resume once.
+     */
+    bindLifecycle() {
+        if (this.lifecycleBound || typeof document === "undefined" || typeof window === "undefined") {
+            return;
+        }
+        document.addEventListener("visibilitychange", this.onVisibility);
+        window.addEventListener("pageshow", this.onPageShow);
+        this.lifecycleBound = true;
+    }
+    unbindLifecycle() {
+        if (!this.lifecycleBound || typeof document === "undefined" || typeof window === "undefined") {
+            return;
+        }
+        document.removeEventListener("visibilitychange", this.onVisibility);
+        window.removeEventListener("pageshow", this.onPageShow);
+        this.lifecycleBound = false;
+    }
+    queueResume() {
+        if (this.resumeQueued)
+            return;
+        this.resumeQueued = true;
+        queueMicrotask(() => {
+            this.resumeQueued = false;
+            this.onForeground();
+        });
     }
     showTest(content) {
         this.testCount += 1;
@@ -236,6 +298,7 @@ export class OptikpiInAppController {
         this.shownThisVisit = false;
         this.picking = false;
         this.pickAgain = false;
+        this.unbindLifecycle();
     }
     contextFor(setup, playerToken) {
         const claims = readPlayerTokenClaims(playerToken);
@@ -272,6 +335,7 @@ export class OptikpiInAppController {
             this.shownThisVisit = false;
         this.lastPlayerKey = playerKey;
         inAppLog(`init workspace ${context.workspaceId} player ${context.playerId}`);
+        this.bindLifecycle();
         void this.flush(session);
         this.fetchMoment();
     }

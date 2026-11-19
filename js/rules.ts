@@ -1,4 +1,4 @@
-import type { InAppPopup } from "./parse";
+import type { InAppPopup } from "./parse.js";
 
 function normalise(path: string): string {
   const trimmed = path.trim();

@@ -7,6 +7,11 @@
 - `OptikpiInAppOverlay` is exported from `optikpi_inapp/overlay` only. Importing `optikpi_inapp` no longer loads React or the overlay CSS.
 - The overlay reads `controller.current` with `useSyncExternalStore`, so a popup that arrives while the component is mounting is still drawn.
 - JWT payloads are decoded as UTF-8, so a non-ASCII `sub` or `wid` matches a token that JSON-escaped the same characters.
+- Built modules import each other with `.js` extensions, so `import("optikpi_inapp")` loads under Node's native ESM.
+- A hidden tab's skipped fetch and event flush run when the tab becomes visible, or the page is restored from the back-forward cache. Hosts do not call `onForeground` for that.
+- Each shown popup id is stored under its own `localStorage` key, so two tabs cannot drop each other's once-per-device record.
+- An image-only card shrinks to the viewport height as well as the width, so the close button stays on screen in a short or landscape window.
+- A modal, bottom sheet, or image-only popup moves focus inside itself, marks the rest of the page inert, and restores focus when it closes.
 
 ## 0.1.0
 

@@ -1,6 +1,6 @@
-import { inAppLog } from "./log";
-import { parseFetchResult, type PopupFetchResult } from "./parse";
-import { SDK_VERSION_HEADER } from "./version";
+import { inAppLog } from "./log.js";
+import { parseFetchResult, type PopupFetchResult } from "./parse.js";
+import { SDK_VERSION_HEADER } from "./version.js";
 
 export type PopupRequestContext = {
   baseUrl: string;
