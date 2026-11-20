@@ -340,26 +340,37 @@ export class OptikpiInAppController {
       inAppLog(`test pop-up drawn (${active.popup.content.layout})`);
       return;
     }
+    if (isPopupExpired(active.popup, new Date())) {
+      inAppLog(`drop ${active.popup.id}: expired before it was drawn`);
+      this.setCurrent(null);
+      if (this.session) {
+        this.session.waiting = this.session.waiting.filter((popup) => popup.id !== active.popup.id);
+      }
+      this.shownThisVisit = false;
+      this.showMoment();
+      return;
+    }
+    const at = new Date().toISOString();
     if (this.undrawnClaim?.id === active.popup.id) {
       const claim = this.undrawnClaim;
       this.undrawnClaim = null;
       this.stopLeaseRenewal();
-      void this.finishDraw(active, claim);
+      void this.finishDraw(active, claim, at);
       return;
     }
     // Storage may have been unavailable when selection ran.
     markShown(active.popup.id);
-    this.track(active, "impression");
+    this.track(active, "impression", undefined, at);
   }
 
-  private async finishDraw(active: ActivePopup, claim: ShownClaim) {
+  private async finishDraw(active: ActivePopup, claim: ShownClaim, at: string) {
     const owned = await finalizeShown(claim);
     if (!owned) {
       inAppLog(`drop ${claim.id}: its claim was replaced before draw`);
       if (this.current === active) this.setCurrent(null);
       return;
     }
-    this.track(active, "impression");
+    this.track(active, "impression", undefined, at);
   }
 
   close(active: ActivePopup, dismissed: boolean) {
@@ -672,7 +683,12 @@ export class OptikpiInAppController {
     }
   }
 
-  private track(active: ActivePopup, type: PopupEvent["type"], buttonIndex?: number) {
+  private track(
+    active: ActivePopup,
+    type: PopupEvent["type"],
+    buttonIndex?: number,
+    at: string = new Date().toISOString()
+  ) {
     if (active.isTest) {
       inAppLog(`test ${type}${buttonIndex != null ? ` button ${buttonIndex}` : ""}`);
       return;
@@ -681,7 +697,7 @@ export class OptikpiInAppController {
     const event: PopupEvent = {
       trackingId: active.popup.trackingId,
       type,
-      at: new Date().toISOString(),
+      at,
       buttonIndex,
     };
     if (enqueueEvent(event, context.workspaceId, context.playerId)) {
@@ -699,11 +715,12 @@ export class OptikpiInAppController {
   }
 
   private flush(session: Session): Promise<void> {
-    if (session.paused || !this.inForeground()) return Promise.resolve();
+    const canStart = !session.paused && this.inForeground();
     if (session.flushing) {
-      session.flushAgain = true;
+      if (canStart) session.flushAgain = true;
       return session.flushPromise ?? Promise.resolve();
     }
+    if (!canStart) return Promise.resolve();
     session.flushing = true;
     const promise = this.runFlush(session);
     session.flushPromise = promise;

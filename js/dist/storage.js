@@ -278,9 +278,14 @@ export async function finalizeShown(claim) {
             const stored = readShownClaim(storage, claim.id);
             if (stored?.token !== claim.token)
                 return false;
-            writeShown(storage, claim.id);
             storage.removeItem(shownClaimKey(claim.id));
             rememberShownInMemory(claim.id);
+            try {
+                writeShown(storage, claim.id);
+            }
+            catch (error) {
+                inAppLog(`could not store shown id, kept in memory: ${error}`);
+            }
             return true;
         });
     }
