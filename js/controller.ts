@@ -465,7 +465,11 @@ export class OptikpiInAppController {
     this.stopLeaseRenewal();
     if (this.current && !this.current.isTest) this.setCurrent(null);
     else if (this.undrawnClaim) this.releaseUndrawn(this.undrawnClaim.id);
-    return flush && session ? this.flush(session) : Promise.resolve();
+    if (!session) return Promise.resolve();
+    // A paused or hidden session must not start another POST, but logout still
+    // has to wait for the one already in flight.
+    if (flush) return this.flush(session);
+    return session.flushPromise ?? Promise.resolve();
   }
 
   private fetchMoment() {
