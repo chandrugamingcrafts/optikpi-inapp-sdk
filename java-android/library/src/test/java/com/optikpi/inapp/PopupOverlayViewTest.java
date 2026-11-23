@@ -242,4 +242,31 @@ public class PopupOverlayViewTest {
     assertTrue("action capped at 45%", action.getWidth() <= Math.round(width * 0.45f));
     assertTrue("title keeps room", title.getWidth() > 0);
   }
+
+  @Test
+  public void aToastAndItsCloseButtonStayOnTheirPhysicalSideUnderRtl() throws Exception {
+    JSONObject json =
+        new JSONObject()
+            .put("version", 1)
+            .put("layout", "toast")
+            .put("size", "md")
+            .put("position", "topRight")
+            .put("title", "Hello")
+            .put("body", "Body")
+            .put("close", new JSONObject().put("show", true).put("position", "topRight"));
+    PopupContent content = PopupContent.tryParse(json);
+    assertNotNull(content);
+    PopupOverlayView view = new PopupOverlayView(context, content, null, NO_OP);
+    view.setLayoutDirection(View.LAYOUT_DIRECTION_RTL);
+    view.measure(
+        View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY));
+    view.layout(0, 0, 800, 480);
+
+    View card = view.getChildAt(view.getChildCount() - 1);
+    FrameLayout cardFrame = (FrameLayout) card;
+    View close = cardFrame.getChildAt(cardFrame.getChildCount() - 1);
+    assertTrue("toast sits on the right", card.getLeft() > 800 / 2);
+    assertTrue("topRight close is on the right", close.getLeft() > card.getWidth() / 2);
+  }
 }

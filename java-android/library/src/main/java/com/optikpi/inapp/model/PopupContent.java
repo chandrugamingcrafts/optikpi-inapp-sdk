@@ -141,4 +141,25 @@ public final class PopupContent {
         mergeTags,
         PopupDelivery.tryParse(map.opt("delivery")));
   }
+
+  /**
+   * Whether the selected layout and size draw {@link #image}. The renderer leaves it out of a
+   * modal at {@code iab_300x250}, a bottom sheet at {@code sm} and a toast below {@code md}, so
+   * nothing should wait for it there.
+   */
+  public boolean drawsImage() {
+    if (image == null) {
+      return false;
+    }
+    switch (layout) {
+      case modal:
+        return size != PopupSize.iab_300x250;
+      case bottomSheet:
+        return size != PopupSize.sm;
+      case toast:
+        return size == PopupSize.md;
+      default:
+        return true; // fullscreen, banner and imageOnly always draw it
+    }
+  }
 }

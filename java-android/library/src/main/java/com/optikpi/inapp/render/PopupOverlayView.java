@@ -504,7 +504,9 @@ public final class PopupOverlayView extends FrameLayout {
     addCloseButton(card, content.theme.isDarkBackground(), 0);
 
     LayoutParams params = new LayoutParams(width, LayoutParams.WRAP_CONTENT);
-    params.gravity = (bottom ? Gravity.BOTTOM : Gravity.TOP) | Gravity.END;
+    // Physical right, as the contract's topRight and bottomRight name it: Gravity.END would move the
+    // toast to the left under an RTL layout.
+    params.gravity = (bottom ? Gravity.BOTTOM : Gravity.TOP) | Gravity.RIGHT;
     params.setMargins(margin, margin, margin, margin);
     addCard(card, params);
   }
@@ -706,10 +708,11 @@ public final class PopupOverlayView extends FrameLayout {
       return;
     }
     FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(dp(40), dp(40));
+    // Physical sides: the contract's topLeft and topRight do not swap under an RTL layout.
     lp.gravity =
         close.position == PopupClosePosition.topLeft
-            ? (Gravity.TOP | Gravity.START)
-            : (Gravity.TOP | Gravity.END);
+            ? (Gravity.TOP | Gravity.LEFT)
+            : (Gravity.TOP | Gravity.RIGHT);
     lp.topMargin = topMarginPx;
     card.addView(closeTarget(dark), lp);
   }

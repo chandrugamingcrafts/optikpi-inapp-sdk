@@ -58,7 +58,9 @@ public final class OptikpiInAppController {
   // The main thread changes these and the worker thread reads them, hence volatile.
   private volatile Setup setup;
   private volatile Session session;
-  private String lastPlayerKey;
+  // Compared field by field: joined into one string, "a/b" + "c" and "a" + "b/c" would collide.
+  private String lastWorkspaceId;
+  private String lastPlayerId;
   private volatile ActivePopup current;
   // Nothing is on screen until a lifecycle callback says so: a process woken for a background
   // component must not fetch or flush.
@@ -414,11 +416,11 @@ public final class OptikpiInAppController {
             onDeepLink,
             onCustomAction,
             blockedRoutes);
-    String playerKey = context.workspaceId + "/" + context.playerId;
-    if (!playerKey.equals(lastPlayerKey)) {
+    if (!context.workspaceId.equals(lastWorkspaceId) || !context.playerId.equals(lastPlayerId)) {
       shownThisVisit = false;
     }
-    lastPlayerKey = playerKey;
+    lastWorkspaceId = context.workspaceId;
+    lastPlayerId = context.playerId;
     workers.execute(
         () -> {
           shown.load();
@@ -566,7 +568,10 @@ public final class OptikpiInAppController {
       next =
           ShowRules.pickPopupToShow(
               s.getWaiting(), shownIds, route, s.blockedRoutes, Instant.now());
-      if (next != null && next.content.image != null && !next.content.image.isGradient()) {
+      // Only an image the selected layout and size will draw is worth waiting for.
+      if (next != null
+          && next.content.drawsImage()
+          && !next.content.image.isGradient()) {
         images.awaitLoad(next.content.image.url, IMAGE_WAIT_MS);
       }
     } catch (Exception e) {
