@@ -276,4 +276,37 @@ public class LifecycleTest {
     assertTrue("focus went back to the field", field.hasFocus());
     PopupHost.detach(activity);
   }
+
+  @Test
+  public void aReportedRouteSurvivesTheActivityBeingRecreated() {
+    ComponentActivity before = activityAt("app://home");
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(before);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+    callbacks.onActivityStarted(before);
+    // A single-activity app reports its own path on navigation.
+    callbacks.routeReported(before, "/dashboard/deposit");
+    controller.didChangeRoute("/dashboard/deposit");
+
+    // Rotation: the state is saved, the old instance goes, a new one is created from the state.
+    android.os.Bundle state = new android.os.Bundle();
+    callbacks.onActivitySaveInstanceState(before, state);
+    callbacks.onActivityStopped(before);
+    callbacks.onActivityDestroyed(before);
+    ComponentActivity after = activityAt("app://home");
+    callbacks.onActivityCreated(after, state);
+    callbacks.onActivityStarted(after);
+
+    assertEquals("/dashboard/deposit", controller.getRoute());
+  }
+
+  @Test
+  public void anActivityCreatedFreshHasNoRouteToRestore() {
+    ComponentActivity activity = activityAt("app://fresh");
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+    callbacks.onActivityCreated(activity, null);
+    callbacks.onActivityCreated(activity, new android.os.Bundle());
+    callbacks.onActivityStarted(activity);
+    assertEquals("app://fresh", controller.getRoute());
+  }
 }

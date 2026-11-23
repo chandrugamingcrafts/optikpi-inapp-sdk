@@ -120,19 +120,57 @@ public class PopupOverlayViewTest {
         .build();
   }
 
+  /**
+   * Applies [insets] and lays the overlay out at [w] x [h]. The test's display must be that size
+   * (see the {@code qualifiers} on the tests): the overlay builds for the display it is made on.
+   */
+  private PopupOverlayView laidOut(String layout, String size, int w, int h, WindowInsets insets)
+      throws Exception {
+    PopupOverlayView view = view(layout, size);
+    view.dispatchApplyWindowInsets(insets);
+    view.measure(
+        View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY));
+    view.layout(0, 0, w, h);
+    return view;
+  }
+
   @Test
-  @Config(sdk = 34)
+  @Config(sdk = 34, qualifiers = "w800dp-h480dp")
   public void aBannerAndAToastStayClearOfTheSystemBars() throws Exception {
     for (String layout : new String[] {"banner", "toast"}) {
-      PopupOverlayView view = view(layout, "md");
-      FrameLayout.LayoutParams before = (FrameLayout.LayoutParams) cardParams(view);
-      view.dispatchApplyWindowInsets(bars(10, 48, 20, 32));
-      FrameLayout.LayoutParams after = (FrameLayout.LayoutParams) cardParams(view);
-      assertEquals(layout + " left", before.leftMargin + 10, after.leftMargin);
-      assertEquals(layout + " top", before.topMargin + 48, after.topMargin);
-      assertEquals(layout + " right", before.rightMargin + 20, after.rightMargin);
-      assertEquals(layout + " bottom", before.bottomMargin + 32, after.bottomMargin);
+      PopupOverlayView view = laidOut(layout, "md", 800, 480, bars(10, 48, 20, 32));
+      View card = view.getChildAt(view.getChildCount() - 1);
+      assertTrue(layout + " left", card.getLeft() >= 10);
+      assertTrue(layout + " top", card.getTop() >= 48);
+      assertTrue(layout + " right", card.getRight() <= 800 - 20);
+      assertTrue(layout + " bottom", card.getBottom() <= 480 - 32);
     }
+  }
+
+  @Test
+  @Config(sdk = 34, qualifiers = "w800dp-h480dp")
+  public void aCardIsCenteredInTheSafeAreaWhenOnlyOneSideHasAnInset() throws Exception {
+    // A cutout on the left of a landscape screen: the safe area is x = 80..800.
+    PopupOverlayView banner = laidOut("banner", "md", 800, 480, bars(80, 0, 0, 0));
+    View card = banner.getChildAt(banner.getChildCount() - 1);
+    assertEquals("full-width banner starts at the safe edge", 80, card.getLeft());
+    assertEquals("and ends at the screen edge, not past it", 800, card.getRight());
+
+    PopupOverlayView modal = laidOut("modal", "md", 800, 480, bars(80, 0, 0, 0));
+    View sheet = modal.getChildAt(modal.getChildCount() - 1);
+    int safeCenter = (80 + 800) / 2;
+    assertEquals(
+        "modal centered in the safe area", safeCenter, (sheet.getLeft() + sheet.getRight()) / 2, 1);
+
+    // Asymmetric bars top and bottom: the same, vertically.
+    PopupOverlayView tall = laidOut("modal", "md", 800, 480, bars(0, 48, 0, 0));
+    View tallCard = tall.getChildAt(tall.getChildCount() - 1);
+    assertEquals(
+        "modal centered below the status bar",
+        (48 + 480) / 2,
+        (tallCard.getTop() + tallCard.getBottom()) / 2,
+        1);
   }
 
   @Test

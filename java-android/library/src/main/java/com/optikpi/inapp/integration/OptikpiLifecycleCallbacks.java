@@ -25,6 +25,8 @@ import java.util.WeakHashMap;
 public final class OptikpiLifecycleCallbacks implements Application.ActivityLifecycleCallbacks {
   private final OptikpiInAppController controller;
 
+  /** Where the route an activity reported rides through a recreation of that activity. */
+  private static final String ROUTE_STATE_KEY = "com.optikpi.inapp.route";
   /** The activities between onStart and onStop. Weak, and a set: it can't go negative. */
   private final Set<Activity> started = Collections.newSetFromMap(new WeakHashMap<>());
 
@@ -139,7 +141,16 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
   }
 
   @Override
-  public void onActivityCreated(Activity activity, Bundle savedInstanceState) {}
+  public synchronized void onActivityCreated(Activity activity, Bundle savedInstanceState) {
+    // A recreated activity (rotation, a configuration change) has no entry of its own: put back the
+    // route its predecessor had reported, before its start is processed as a visit.
+    if (savedInstanceState != null) {
+      String route = savedInstanceState.getString(ROUTE_STATE_KEY);
+      if (route != null) {
+        routes.put(activity, route);
+      }
+    }
+  }
 
   @Override
   public synchronized void onActivityStarted(Activity activity) {
@@ -175,7 +186,12 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
   }
 
   @Override
-  public void onActivitySaveInstanceState(Activity activity, Bundle outState) {}
+  public synchronized void onActivitySaveInstanceState(Activity activity, Bundle outState) {
+    String route = routes.get(activity);
+    if (route != null) {
+      outState.putString(ROUTE_STATE_KEY, route);
+    }
+  }
 
   @Override
   public synchronized void onActivityDestroyed(Activity activity) {

@@ -140,12 +140,46 @@ public final class PopupOverlayView extends FrameLayout {
     screenH = Math.max(1, rawH - insetT - insetB);
   }
 
-  /** Adds a card clear of the system bars and the display cutout. */
+  /**
+   * Adds a card clear of the system bars and the display cutout.
+   *
+   * <p>On an axis where the card is centered, {@code FrameLayout} shifts it by {@code leftMargin -
+   * rightMargin}, not by half of that, so full margins would push it twice as far as needed (and
+   * off the screen on the far side when the insets differ, as with a one-sided cutout). Half the
+   * difference centers it in the inset-safe area. Elsewhere the margins pin the card to its edge or
+   * stretch it, so the full insets apply.
+   */
   private void addCard(View card, LayoutParams params) {
-    params.leftMargin += insetL;
-    params.topMargin += insetT;
-    params.rightMargin += insetR;
-    params.bottomMargin += insetB;
+    int gravity = params.gravity;
+    boolean centeredX = false;
+    boolean centeredY = false;
+    if (gravity != -1) {
+      int absolute = Gravity.getAbsoluteGravity(gravity, getLayoutDirection());
+      centeredX = (absolute & Gravity.HORIZONTAL_GRAVITY_MASK) == Gravity.CENTER_HORIZONTAL;
+      centeredY = (gravity & Gravity.VERTICAL_GRAVITY_MASK) == Gravity.CENTER_VERTICAL;
+    }
+    if (centeredX) {
+      int shift = insetL - insetR;
+      if (shift >= 0) {
+        params.leftMargin += shift / 2;
+      } else {
+        params.rightMargin += -shift / 2;
+      }
+    } else {
+      params.leftMargin += insetL;
+      params.rightMargin += insetR;
+    }
+    if (centeredY) {
+      int shift = insetT - insetB;
+      if (shift >= 0) {
+        params.topMargin += shift / 2;
+      } else {
+        params.bottomMargin += -shift / 2;
+      }
+    } else {
+      params.topMargin += insetT;
+      params.bottomMargin += insetB;
+    }
     addView(card, params);
   }
 
