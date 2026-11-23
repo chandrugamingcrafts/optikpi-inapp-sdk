@@ -14,6 +14,8 @@ import android.os.Looper;
 import org.robolectric.android.controller.ActivityController;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
+import android.widget.LinearLayout;
 import com.optikpi.inapp.integration.OptikpiLifecycleCallbacks;
 import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.render.PopupHost;
@@ -239,5 +241,39 @@ public class LifecycleTest {
     callbacks.onActivityStarted(second);
 
     assertEquals("app://second", controller.getRoute());
+  }
+
+  @Test
+  public void aBlockingPopupTakesKeyboardFocusOffThePageAndGivesItBack() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
+    LinearLayout page = new LinearLayout(activity);
+    EditText field = new EditText(activity);
+    page.addView(field);
+    activity.setContentView(page);
+    field.requestFocus();
+    assertTrue(field.hasFocus());
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    new OptikpiLifecycleCallbacks(controller).adoptRunningActivity(activity);
+    ViewGroup pageRoot = (ViewGroup) pageRoot(activity);
+    int original = pageRoot.getDescendantFocusability();
+
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle();
+    assertFalse("the field lost focus", field.hasFocus());
+    assertEquals(ViewGroup.FOCUS_BLOCK_DESCENDANTS, pageRoot.getDescendantFocusability());
+
+    // A banner leaves the page usable again.
+    controller.showTest(
+        PopupContent.tryParse(
+            new JSONObject()
+                .put("version", 1)
+                .put("layout", "banner")
+                .put("size", "md")
+                .put("title", "Hi")));
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals(original, pageRoot.getDescendantFocusability());
+    assertTrue("focus went back to the field", field.hasFocus());
+    PopupHost.detach(activity);
   }
 }

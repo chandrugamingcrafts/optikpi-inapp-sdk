@@ -1,6 +1,9 @@
 package com.optikpi.inapp.render;
 
 import android.app.Activity;
+import android.content.Context;
+import android.view.inputmethod.InputMethodManager;
+import java.lang.ref.WeakReference;
 import androidx.activity.ComponentActivity;
 import android.os.Handler;
 import android.os.Looper;
@@ -87,14 +90,36 @@ public final class PopupHost {
     /** The page's views and what their accessibility importance was before a blocking pop-up. */
     private final Map<View, Integer> hidden = new HashMap<>();
 
-    /** A blocking pop-up covers the page, so a screen reader must not reach what is behind it. */
+    private final Map<ViewGroup, Integer> focusability = new HashMap<>();
+    private WeakReference<View> focusBefore = new WeakReference<>(null);
+
+    /**
+     * A blocking pop-up covers the page, so neither a screen reader nor a keyboard (or the IME)
+     * may reach what is behind it: hide it from accessibility, take focus off it and keep focus
+     * from going back until the pop-up closes.
+     */
     void hidePage() {
+      if (hidden.isEmpty()) {
+        focusBefore = new WeakReference<>(root.findFocus());
+      }
       for (int i = 0; i < root.getChildCount(); i++) {
         View child = root.getChildAt(i);
-        if (child != overlay && !hidden.containsKey(child)) {
-          hidden.put(child, child.getImportantForAccessibility());
-          child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        if (child == overlay || hidden.containsKey(child)) {
+          continue;
         }
+        hidden.put(child, child.getImportantForAccessibility());
+        child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        if (child instanceof ViewGroup) {
+          ViewGroup group = (ViewGroup) child;
+          focusability.put(group, group.getDescendantFocusability());
+          group.setDescendantFocusability(ViewGroup.FOCUS_BLOCK_DESCENDANTS);
+        }
+        child.clearFocus();
+      }
+      InputMethodManager imm =
+          (InputMethodManager) overlay.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
+      if (imm != null) {
+        imm.hideSoftInputFromWindow(overlay.getWindowToken(), 0);
       }
     }
 
@@ -129,7 +154,18 @@ public final class PopupHost {
       for (Map.Entry<View, Integer> entry : hidden.entrySet()) {
         entry.getKey().setImportantForAccessibility(entry.getValue());
       }
+      boolean wasHidden = !hidden.isEmpty();
       hidden.clear();
+      for (Map.Entry<ViewGroup, Integer> entry : focusability.entrySet()) {
+        entry.getKey().setDescendantFocusability(entry.getValue());
+      }
+      focusability.clear();
+      View before = focusBefore.get();
+      focusBefore = new WeakReference<>(null);
+      // Still part of this page (not removed while the pop-up was up)?
+      if (wasHidden && before != null && before.getRootView() == root.getRootView()) {
+        before.requestFocus();
+      }
     }
 
     HostBinding(
@@ -192,6 +228,9 @@ public final class PopupHost {
                       new FrameLayout.LayoutParams(
                           FrameLayout.LayoutParams.MATCH_PARENT,
                           FrameLayout.LayoutParams.MATCH_PARENT));
+                  if (blocks) {
+                    view.requestFocus(); // keyboard focus belongs to the pop-up now
+                  }
                   reportWhenDrawn(view, active);
                 });
           };

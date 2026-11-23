@@ -112,6 +112,8 @@ public final class PopupOverlayView extends FrameLayout {
     // A banner or toast must not swallow touches outside its card.
     setClickable(blocking);
     setFocusable(blocking);
+    // So the host can move focus here, in touch mode too, when a blocking pop-up appears.
+    setFocusableInTouchMode(blocking);
     build();
   }
 

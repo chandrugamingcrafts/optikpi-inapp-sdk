@@ -126,7 +126,9 @@ public final class OptikpiInApp {
     } catch (RuntimeException e) {
       return false;
     }
-    return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
+    // IMPORTANCE_FOREGROUND is a process with something on screen the user is using. A foreground
+    // service alone is 125, a visible-but-unfocused process 200: neither is showing us a pop-up.
+    return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
   }
 
   public static void showTest(Context context, PopupContent content) {
