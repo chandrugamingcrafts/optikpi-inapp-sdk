@@ -1,6 +1,7 @@
 package com.optikpi.inapp.render;
 
 import android.graphics.Bitmap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -12,21 +13,25 @@ import java.util.Map;
 public final class BoundedBitmapCache {
   public static final int DEFAULT_MAX_ENTRIES = 8;
 
+  /** A count alone doesn't bound memory: eight big bitmaps are a lot. */
+  public static final long DEFAULT_MAX_BYTES = 32L * 1024 * 1024;
+
   private final int maxEntries;
-  private final LinkedHashMap<String, Bitmap> entries =
-      new LinkedHashMap<String, Bitmap>(16, 0.75f, true) {
-        @Override
-        protected boolean removeEldestEntry(Map.Entry<String, Bitmap> eldest) {
-          return size() > BoundedBitmapCache.this.maxEntries;
-        }
-      };
+  private final long maxBytes;
+  private long bytes;
+  private final LinkedHashMap<String, Bitmap> entries = new LinkedHashMap<>(16, 0.75f, true);
 
   public BoundedBitmapCache() {
-    this(DEFAULT_MAX_ENTRIES);
+    this(DEFAULT_MAX_ENTRIES, DEFAULT_MAX_BYTES);
   }
 
   public BoundedBitmapCache(int maxEntries) {
+    this(maxEntries, DEFAULT_MAX_BYTES);
+  }
+
+  public BoundedBitmapCache(int maxEntries, long maxBytes) {
     this.maxEntries = Math.max(1, maxEntries);
+    this.maxBytes = Math.max(1, maxBytes);
   }
 
   public synchronized Bitmap get(String url) {
@@ -34,7 +39,26 @@ public final class BoundedBitmapCache {
   }
 
   public synchronized void put(String url, Bitmap bitmap) {
+    Bitmap previous = entries.remove(url);
+    if (previous != null) {
+      bytes -= previous.getAllocationByteCount();
+    }
+    long size = bitmap.getAllocationByteCount();
+    if (size > maxBytes) {
+      return; // Too big to keep: the caller still has it for this one draw.
+    }
     entries.put(url, bitmap);
+    bytes += size;
+    // Drop the least recently used until both bounds hold.
+    Iterator<Map.Entry<String, Bitmap>> it = entries.entrySet().iterator();
+    while ((entries.size() > maxEntries || bytes > maxBytes) && it.hasNext()) {
+      Map.Entry<String, Bitmap> eldest = it.next();
+      if (eldest.getValue() == bitmap) {
+        break;
+      }
+      bytes -= eldest.getValue().getAllocationByteCount();
+      it.remove();
+    }
   }
 
   public synchronized int size() {

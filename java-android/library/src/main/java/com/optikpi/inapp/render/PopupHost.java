@@ -6,6 +6,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.ViewTreeObserver;
 import android.widget.FrameLayout;
 import androidx.activity.OnBackPressedCallback;
 import com.optikpi.inapp.ActivePopup;
@@ -60,6 +61,9 @@ public final class PopupHost {
       return;
     }
     binding.controller.removeCurrentListener(binding.listener);
+    // Work already queued for this binding must not run against a root it has left.
+    binding.detached = true;
+    binding.handler.removeCallbacksAndMessages(null);
     binding.restorePage();
     ViewGroup parent = (ViewGroup) binding.overlay.getParent();
     if (parent != null) {
@@ -75,6 +79,9 @@ public final class PopupHost {
     final OnBackPressedCallback back;
     final OptikpiInAppController.CurrentListener listener;
 
+    final Handler handler = new Handler(Looper.getMainLooper());
+    volatile boolean detached;
+
     /** The page's views and what their accessibility importance was before a blocking pop-up. */
     private final Map<View, Integer> hidden = new HashMap<>();
 
@@ -87,6 +94,33 @@ public final class PopupHost {
           child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
         }
       }
+    }
+
+    /**
+     * An impression is a pop-up the player could see: wait for a frame that is really about to be
+     * drawn, and only count it if this overlay is still attached and its window visible. A post
+     * would also run for an activity that stopped a moment after the pop-up was added.
+     */
+    private void reportWhenDrawn(PopupOverlayView view, ActivePopup active) {
+      ViewTreeObserver observer = view.getViewTreeObserver();
+      observer.addOnPreDrawListener(
+          new ViewTreeObserver.OnPreDrawListener() {
+            @Override
+            public boolean onPreDraw() {
+              ViewTreeObserver current = view.getViewTreeObserver();
+              if (current.isAlive()) {
+                current.removeOnPreDrawListener(this);
+              }
+              if (!detached
+                  && view.getParent() == overlay
+                  && view.isAttachedToWindow()
+                  && view.isShown()
+                  && view.getWindowVisibility() == View.VISIBLE) {
+                controller.didDraw(active);
+              }
+              return true;
+            }
+          });
     }
 
     void restorePage() {
@@ -107,9 +141,11 @@ public final class PopupHost {
       this.back = back;
       this.listener =
           active -> {
-            Handler handler = new Handler(Looper.getMainLooper());
             handler.post(
                 () -> {
+                  if (detached) {
+                    return;
+                  }
                   overlay.removeAllViews();
                   boolean blocks =
                       active != null && PopupBlocksPage.blocksPage(active.getContent());
@@ -154,7 +190,7 @@ public final class PopupHost {
                       new FrameLayout.LayoutParams(
                           FrameLayout.LayoutParams.MATCH_PARENT,
                           FrameLayout.LayoutParams.MATCH_PARENT));
-                  overlay.post(() -> controller.didDraw(active));
+                  reportWhenDrawn(view, active);
                 });
           };
     }

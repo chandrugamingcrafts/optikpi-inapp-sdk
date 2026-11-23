@@ -83,4 +83,23 @@ public class StoresTest {
   public void aNullPlayerTokenIsUnreadable() {
     assertNull(PlayerTokenClaims.tryRead(null));
   }
+
+  @Test
+  public void imageCacheAlsoStaysUnderItsByteBudget() {
+    // Each 100x100 ARGB bitmap is 40,000 bytes: room for two.
+    BoundedBitmapCache cache = new BoundedBitmapCache(8, 90_000);
+    for (int i = 0; i < 4; i++) {
+      cache.put("u" + i, Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888));
+    }
+    assertEquals(2, cache.size());
+    assertNull(cache.get("u0"));
+    assertNotNull(cache.get("u3"));
+  }
+
+  @Test
+  public void aBitmapBiggerThanTheWholeBudgetIsNotKept() {
+    BoundedBitmapCache cache = new BoundedBitmapCache(8, 1_000);
+    cache.put("big", Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888));
+    assertEquals(0, cache.size());
+  }
 }

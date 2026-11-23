@@ -49,7 +49,9 @@ public final class OptikpiInAppController {
   private volatile Session session;
   private String lastPlayerKey;
   private volatile ActivePopup current;
-  private volatile boolean inForeground = true;
+  // Nothing is on screen until a lifecycle callback says so: a process woken for a background
+  // component must not fetch or flush.
+  private volatile boolean inForeground = false;
   private Runnable flushTimer;
   private int testCount;
 
@@ -137,6 +139,11 @@ public final class OptikpiInAppController {
     return images;
   }
 
+  /** The screen path in force, or null before the first one is reported. */
+  public String getRoute() {
+    return route;
+  }
+
   public ActivePopup getCurrent() {
     return current;
   }
@@ -162,6 +169,12 @@ public final class OptikpiInAppController {
     }
     inForeground = value;
     if (value) {
+      // A pop-up published while the app was away can have expired since: don't show it now.
+      ActivePopup active = current;
+      if (active != null && !active.isTest && active.popup.isExpiredAt(Instant.now())) {
+        InAppLog.log("drop " + active.popup.id + ": it expired while the app was in the background");
+        setCurrent(null);
+      }
       Session s = session;
       if (s != null) {
         flush(s);
@@ -473,6 +486,11 @@ public final class OptikpiInAppController {
 
   public void didDraw(ActivePopup active) {
     if (current != active || active.drawn) {
+      return;
+    }
+    if (!active.isTest && active.popup.isExpiredAt(Instant.now())) {
+      InAppLog.log("drop " + active.popup.id + ": it expired before it was drawn");
+      setCurrent(null);
       return;
     }
     active.drawn = true;

@@ -1,6 +1,7 @@
 package com.optikpi.inapp;
 
 import android.app.Activity;
+import android.app.ActivityManager;
 import android.app.Application;
 import android.content.Context;
 import com.optikpi.inapp.integration.OptikpiLifecycleCallbacks;
@@ -63,6 +64,8 @@ public final class OptikpiInApp {
       Activity running = activityOf(context);
       if (running != null) {
         callbacks.adoptRunningActivity(running);
+      } else {
+        callbacks.syncForeground(isProcessInForeground(app));
       }
     }
     ctrl.initWithToken(
@@ -88,7 +91,26 @@ public final class OptikpiInApp {
   }
 
   public static void didChangeRoute(Context context, String route) {
+    OptikpiLifecycleCallbacks callbacks = lifecycle;
+    if (callbacks != null) {
+      // So the activity gets this route back when it returns to the top (see onActivityResumed).
+      callbacks.routeReported(activityOf(context), route);
+    }
     OptikpiInAppController.getInstance(context).didChangeRoute(route);
+  }
+
+  /**
+   * Whether this process is what the user is looking at. A process started for a service,
+   * receiver or job is not, however early {@code init} runs.
+   */
+  private static boolean isProcessInForeground(Context context) {
+    ActivityManager.RunningAppProcessInfo info = new ActivityManager.RunningAppProcessInfo();
+    try {
+      ActivityManager.getMyMemoryState(info);
+    } catch (RuntimeException e) {
+      return false;
+    }
+    return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_VISIBLE;
   }
 
   public static void showTest(Context context, PopupContent content) {

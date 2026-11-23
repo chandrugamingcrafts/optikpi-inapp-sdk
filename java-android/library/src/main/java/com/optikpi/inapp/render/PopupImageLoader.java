@@ -1,7 +1,9 @@
 package com.optikpi.inapp.render;
 
 import android.graphics.Bitmap;
+import android.content.res.Resources;
 import android.graphics.BitmapFactory;
+import android.util.DisplayMetrics;
 import android.os.Handler;
 import android.os.Looper;
 import com.optikpi.inapp.InAppLog;
@@ -13,6 +15,8 @@ import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
+import okhttp3.ResponseBody;
+import okio.BufferedSource;
 
 /** Loads a pop-up's image over HTTP(S) into a small bounded in-memory cache. */
 public final class PopupImageLoader {
@@ -31,6 +35,51 @@ public final class PopupImageLoader {
 
   public PopupImageLoader() {
     client = new OkHttpClient.Builder().callTimeout(TIMEOUT_SEC, TimeUnit.SECONDS).build();
+  }
+
+  /** The most bytes of image we will download, however large the server says it is. */
+  public static final long MAX_DOWNLOAD_BYTES = 5L * 1024 * 1024;
+
+  /**
+   * The body's bytes, or null when it is longer than {@link #MAX_DOWNLOAD_BYTES}: a server can
+   * send any length (or none, chunked), so the limit is on what is read, not only on the header.
+   */
+  static byte[] readBounded(ResponseBody body) throws java.io.IOException {
+    long declared = body.contentLength();
+    if (declared > MAX_DOWNLOAD_BYTES) {
+      return null;
+    }
+    BufferedSource source = body.source();
+    if (source.request(MAX_DOWNLOAD_BYTES + 1)) {
+      return null;
+    }
+    return source.readByteArray();
+  }
+
+  /** No image is drawn bigger than the screen, so nothing needs more pixels than that. */
+  private static int maxDimensionPx() {
+    DisplayMetrics metrics = Resources.getSystem().getDisplayMetrics();
+    return Math.max(1, Math.max(metrics.widthPixels, metrics.heightPixels));
+  }
+
+  /**
+   * Decodes [bytes] at the largest power-of-two reduction that still has no side longer than
+   * [maxDimension]. The size is read first, so a huge image is never decoded in full.
+   */
+  static Bitmap decodeScaled(byte[] bytes, int maxDimension) {
+    BitmapFactory.Options bounds = new BitmapFactory.Options();
+    bounds.inJustDecodeBounds = true;
+    BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
+      return null;
+    }
+    int sample = 1;
+    while (bounds.outWidth / sample > maxDimension || bounds.outHeight / sample > maxDimension) {
+      sample *= 2;
+    }
+    BitmapFactory.Options options = new BitmapFactory.Options();
+    options.inSampleSize = sample;
+    return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
   }
 
   public Bitmap getCached(String url) {
@@ -57,14 +106,18 @@ public final class PopupImageLoader {
                       if (!response.isSuccessful() || response.body() == null) {
                         return null;
                       }
-                      byte[] bytes = response.body().bytes();
-                      Bitmap bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+                      byte[] bytes = readBounded(response.body());
+                      if (bytes == null) {
+                        InAppLog.log("image too large, skipped: " + url);
+                        return null;
+                      }
+                      Bitmap bitmap = decodeScaled(bytes, maxDimensionPx());
                       if (bitmap != null) {
                         cache.put(url, bitmap);
                       }
                       return bitmap;
                     }
-                  } catch (Exception e) {
+                  } catch (Exception | OutOfMemoryError e) {
                     InAppLog.log("image load failed: " + url);
                     return null;
                   } finally {

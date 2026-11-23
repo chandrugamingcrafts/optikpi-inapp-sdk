@@ -8,6 +8,8 @@ import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Activity;
 import androidx.activity.ComponentActivity;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Looper;
 import org.robolectric.android.controller.ActivityController;
 import android.view.View;
@@ -128,5 +130,71 @@ public class LifecycleTest {
     shadowOf(Looper.getMainLooper()).idle();
     assertEquals(original, page.getImportantForAccessibility());
     PopupHost.detach(activity);
+  }
+
+  private static ComponentActivity activityAt(String url) {
+    return Robolectric.buildActivity(
+            ComponentActivity.class, new Intent().setData(Uri.parse(url)))
+        .create()
+        .start()
+        .resume()
+        .get();
+  }
+
+  @Test
+  public void anActivityBackOnTopGetsItsOwnRouteBack() {
+    ComponentActivity first = activityAt("app://first");
+    ComponentActivity second = activityAt("app://second");
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(first);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+
+    callbacks.onActivityStarted(first);
+    callbacks.onActivityResumed(first);
+    assertEquals("app://first", controller.getRoute());
+    // A dialog-themed activity opens over it: the first stays started, and is not started again.
+    callbacks.onActivityStarted(second);
+    callbacks.onActivityResumed(second);
+    assertEquals("app://second", controller.getRoute());
+    callbacks.onActivityPaused(second);
+    callbacks.onActivityStopped(second);
+    callbacks.onActivityResumed(first);
+
+    assertEquals("app://first", controller.getRoute());
+  }
+
+  @Test
+  public void aRouteTheAppReportedIsTheOneRestored() {
+    ComponentActivity first = activityAt("app://first");
+    ComponentActivity second = activityAt("app://second");
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(first);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+
+    callbacks.onActivityStarted(first);
+    callbacks.onActivityResumed(first);
+    callbacks.routeReported(null, "/dashboard/home"); // the app's own path for the top activity
+    controller.didChangeRoute("/dashboard/home");
+    callbacks.onActivityStarted(second);
+    callbacks.onActivityResumed(second);
+    callbacks.onActivityStopped(second);
+    callbacks.onActivityResumed(first);
+
+    assertEquals("/dashboard/home", controller.getRoute());
+  }
+
+  @Test
+  public void workQueuedBeforeDetachDoesNotHideThePageAfterwards() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
+    View page = new View(activity);
+    activity.setContentView(page);
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    int original = page.getImportantForAccessibility();
+    PopupHost.attach(activity, controller);
+
+    controller.showTest(modal()); // queues the host's work on the main looper
+    PopupHost.detach(activity); // the activity stops before it runs
+    shadowOf(Looper.getMainLooper()).idle();
+
+    assertEquals(original, page.getImportantForAccessibility());
   }
 }

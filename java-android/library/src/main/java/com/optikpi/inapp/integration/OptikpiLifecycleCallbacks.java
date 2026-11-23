@@ -8,7 +8,9 @@ import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 import com.optikpi.inapp.OptikpiInAppController;
 import com.optikpi.inapp.render.PopupHost;
+import java.lang.ref.WeakReference;
 import java.util.Collections;
+import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
 
@@ -25,6 +27,15 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
 
   /** The activities between onStart and onStop. Weak, and a set: it can't go negative. */
   private final Set<Activity> started = Collections.newSetFromMap(new WeakHashMap<>());
+
+  /**
+   * The route each activity last reported, so an activity that comes back to the top (a dialog or
+   * translucent activity closing over it never restarts it) gets its own route back, not the
+   * covering activity's.
+   */
+  private final Map<Activity, String> routes = new WeakHashMap<>();
+
+  private WeakReference<Activity> top = new WeakReference<>(null);
 
   public OptikpiLifecycleCallbacks(OptikpiInAppController controller) {
     this.controller = controller;
@@ -50,8 +61,33 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     }
     if (!PopupHost.isAttached(activity)) {
       PopupHost.attach(activity, controller);
-      controller.didChangeRoute(routeOf(activity));
+      top = new WeakReference<>(activity);
+      controller.didChangeRoute(currentRoute(activity));
     }
+  }
+
+  /**
+   * Seeds the foreground state when {@code init} had no activity to adopt (an {@code Application}
+   * context): until an activity starts there is nothing to say the app is on screen, and a process
+   * woken for a background component must not fetch.
+   */
+  public synchronized void syncForeground(boolean processInForeground) {
+    if (started.isEmpty()) {
+      controller.setForeground(processInForeground);
+    }
+  }
+
+  /** The app reported a route: remember it for [activity], or for the top one when null. */
+  public synchronized void routeReported(Activity activity, String route) {
+    Activity target = activity != null ? activity : top.get();
+    if (target != null && route != null) {
+      routes.put(target, route);
+    }
+  }
+
+  private String currentRoute(Activity activity) {
+    String reported = routes.get(activity);
+    return reported != null ? reported : routeOf(activity);
   }
 
   /**
@@ -91,11 +127,17 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
       controller.setForeground(true);
     }
     PopupHost.attach(activity, controller);
-    controller.didChangeRoute(routeOf(activity));
+    top = new WeakReference<>(activity);
+    controller.didChangeRoute(currentRoute(activity));
   }
 
   @Override
-  public void onActivityResumed(Activity activity) {}
+  public synchronized void onActivityResumed(Activity activity) {
+    // A dialog-themed or translucent activity closing leaves the one under it started, so it gets
+    // no onStart: put its route back here, or the covering activity's route would stay in force.
+    top = new WeakReference<>(activity);
+    controller.didChangeRoute(currentRoute(activity));
+  }
 
   @Override
   public void onActivityPaused(Activity activity) {}
@@ -115,6 +157,7 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
   @Override
   public synchronized void onActivityDestroyed(Activity activity) {
     started.remove(activity);
+    routes.remove(activity);
     PopupHost.detach(activity);
   }
 }
