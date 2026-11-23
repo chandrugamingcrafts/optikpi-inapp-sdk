@@ -92,7 +92,8 @@ public final class OptikpiInAppController {
   }
 
   private static final class Session {
-    volatile PopupRequestContext context;
+    private PopupRequestContext context;
+    private boolean paused;
     final PopupSource source;
     final ActivePopup.DeepLinkHandler onDeepLink;
     final ActivePopup.CustomActionHandler onCustomAction;
@@ -100,7 +101,6 @@ public final class OptikpiInAppController {
     final FetchThrottle throttle = new FetchThrottle();
     volatile List<InAppPopup> waiting = Collections.emptyList();
     volatile boolean fetching;
-    volatile boolean paused;
 
     Session(
         PopupRequestContext context,
@@ -113,6 +113,41 @@ public final class OptikpiInAppController {
       this.onDeepLink = onDeepLink;
       this.onCustomAction = onCustomAction;
       this.blockedRoutes = blockedRoutes;
+    }
+
+    synchronized PopupRequestContext getContext() {
+      return context;
+    }
+
+    synchronized boolean isPaused() {
+      return paused;
+    }
+
+    /** The active request context, or null while this session is auth-paused. */
+    synchronized PopupRequestContext activeContext() {
+      return paused ? null : context;
+    }
+
+    /** Installs a refreshed token for the same player and unpauses atomically. */
+    synchronized void replaceContext(PopupRequestContext next) {
+      context = next;
+      paused = false;
+    }
+
+    synchronized void pauseForUnreadableToken() {
+      paused = true;
+    }
+
+    /**
+     * Marks the session paused only if {@code failed} is still the current context. Synchronized
+     * with {@link #replaceContext} so a 401/403 from an old token cannot pause a fresh one.
+     */
+    synchronized boolean pauseIfCurrent(PopupRequestContext failed) {
+      if (context != failed) {
+        return false;
+      }
+      paused = true;
+      return true;
     }
   }
 
@@ -158,6 +193,19 @@ public final class OptikpiInAppController {
     listeners.remove(listener);
   }
 
+  private boolean isOnMain() {
+    Looper mainLooper = Looper.getMainLooper();
+    return mainLooper != null && Looper.myLooper() == mainLooper;
+  }
+
+  void runOnMain(Runnable work) {
+    if (isOnMain()) {
+      work.run();
+    } else {
+      main.post(work);
+    }
+  }
+
   private void setCurrent(ActivePopup value) {
     ActivePopup previous = current;
     if (previous != null && previous.autoDismissTask != null) {
@@ -172,6 +220,10 @@ public final class OptikpiInAppController {
   }
 
   public void setForeground(boolean value) {
+    runOnMain(() -> setForegroundOnMain(value));
+  }
+
+  private void setForegroundOnMain(boolean value) {
     if (inForeground == value) {
       return;
     }
@@ -200,6 +252,24 @@ public final class OptikpiInAppController {
       ActivePopup.DeepLinkHandler onDeepLink,
       ActivePopup.CustomActionHandler onCustomAction,
       List<String> blockedRoutes) {
+    List<String> routes =
+        blockedRoutes != null
+            ? Collections.unmodifiableList(new ArrayList<>(blockedRoutes))
+            : Collections.emptyList();
+    runOnMain(
+        () ->
+            initWithTokenOnMain(
+                apiKey, playerToken, baseUrl, source, onDeepLink, onCustomAction, routes));
+  }
+
+  void initWithTokenOnMain(
+      String apiKey,
+      String playerToken,
+      String baseUrl,
+      PopupSource source,
+      ActivePopup.DeepLinkHandler onDeepLink,
+      ActivePopup.CustomActionHandler onCustomAction,
+      List<String> blockedRoutes) {
     Setup newSetup =
         new Setup(apiKey, baseUrl, source, onDeepLink, onCustomAction, blockedRoutes);
     PopupRequestContext context = contextFor(newSetup, playerToken);
@@ -209,7 +279,7 @@ public final class OptikpiInAppController {
       setup = newSetup;
       return;
     }
-    init(context, source, onDeepLink, onCustomAction, blockedRoutes);
+    initOnMain(context, source, onDeepLink, onCustomAction, blockedRoutes);
   }
 
   private PopupRequestContext contextFor(Setup setup, String playerToken) {
@@ -226,6 +296,10 @@ public final class OptikpiInAppController {
   }
 
   public void setPlayerToken(String playerToken) {
+    runOnMain(() -> setPlayerTokenOnMain(playerToken));
+  }
+
+  private void setPlayerTokenOnMain(String playerToken) {
     Setup s = setup;
     if (s == null) {
       InAppLog.log("setPlayerToken before init: ignored");
@@ -236,18 +310,18 @@ public final class OptikpiInAppController {
     if (context == null) {
       InAppLog.log("player token unreadable: not fetching");
       if (existing != null) {
-        existing.paused = true;
+        existing.pauseForUnreadableToken();
       }
       return;
     }
-    if (existing == null
-        || !existing.context.playerId.equals(context.playerId)
-        || !existing.context.workspaceId.equals(context.workspaceId)) {
-      init(context, s.source, s.onDeepLink, s.onCustomAction, s.blockedRoutes);
+    PopupRequestContext existingContext = existing != null ? existing.getContext() : null;
+    if (existingContext == null
+        || !existingContext.playerId.equals(context.playerId)
+        || !existingContext.workspaceId.equals(context.workspaceId)) {
+      initOnMain(context, s.source, s.onDeepLink, s.onCustomAction, s.blockedRoutes);
       return;
     }
-    existing.context = context;
-    existing.paused = false;
+    existing.replaceContext(context);
     InAppLog.log("player token replaced");
     flush(existing);
     fetchMoment();
@@ -259,12 +333,26 @@ public final class OptikpiInAppController {
       ActivePopup.DeepLinkHandler onDeepLink,
       ActivePopup.CustomActionHandler onCustomAction,
       List<String> blockedRoutes) {
+    List<String> routes =
+        blockedRoutes != null
+            ? Collections.unmodifiableList(new ArrayList<>(blockedRoutes))
+            : Collections.emptyList();
+    runOnMain(() -> initOnMain(context, source, onDeepLink, onCustomAction, routes));
+  }
+
+  private void initOnMain(
+      PopupRequestContext context,
+      PopupSource source,
+      ActivePopup.DeepLinkHandler onDeepLink,
+      ActivePopup.CustomActionHandler onCustomAction,
+      List<String> blockedRoutes) {
     Session previous = session;
+    PopupRequestContext previousContext = previous != null ? previous.getContext() : null;
     boolean switching =
-        previous != null
-            && (!previous.context.playerId.equals(context.playerId)
-                || !previous.context.workspaceId.equals(context.workspaceId));
-    endSession(switching && previous != null && !previous.paused);
+        previousContext != null
+            && (!previousContext.playerId.equals(context.playerId)
+                || !previousContext.workspaceId.equals(context.workspaceId));
+    endSession(switching && previous != null && !previous.isPaused());
     Session newSession =
         new Session(
             context,
@@ -302,8 +390,12 @@ public final class OptikpiInAppController {
   }
 
   public void logout() {
+    runOnMain(this::logoutOnMain);
+  }
+
+  private void logoutOnMain() {
     InAppLog.log("logout");
-    endSession(session != null && !session.paused);
+    endSession(session != null && !session.isPaused());
     setup = null;
   }
 
@@ -332,11 +424,14 @@ public final class OptikpiInAppController {
   }
 
   private void maybeFetch(Session s) {
-    if (session != s || s.paused || s.fetching || !inForeground || !s.throttle.canFetch(SystemClock.elapsedRealtime())) {
+    if (session != s || s.fetching || !inForeground || !s.throttle.canFetch(SystemClock.elapsedRealtime())) {
+      return;
+    }
+    PopupRequestContext context = s.activeContext();
+    if (context == null) {
       return;
     }
     s.fetching = true;
-    PopupRequestContext context = s.context;
     boolean tokenChanged = false;
     try {
       PopupFetchResult result = s.source.fetch(context);
@@ -369,15 +464,18 @@ public final class OptikpiInAppController {
   }
 
   private boolean pauseIfCurrent(Session s, PopupRequestContext context) {
-    if (s.context != context) {
+    if (!s.pauseIfCurrent(context)) {
       return false;
     }
     InAppLog.log("player token refused: paused until setPlayerToken");
-    s.paused = true;
     return true;
   }
 
   public void didChangeRoute(String newRoute) {
+    runOnMain(() -> didChangeRouteOnMain(newRoute));
+  }
+
+  void didChangeRouteOnMain(String newRoute) {
     if (newRoute == null || newRoute.equals(route)) {
       return;
     }
@@ -411,7 +509,7 @@ public final class OptikpiInAppController {
       pickAgain = true;
       return;
     }
-    if (shownThisVisit || current != null) {
+    if (session != s || shownThisVisit || current != null) {
       return;
     }
     picking = true;
@@ -466,10 +564,14 @@ public final class OptikpiInAppController {
     // (see didDraw). One that is dropped before that, expired during the image wait or hidden by
     // a screen change, can then be tried again instead of being lost.
     InAppLog.log("show " + picked.id + " (" + picked.content.layout.name() + ") on " + route);
-    setCurrent(new ActivePopup(picked, s.context, s.onDeepLink, s.onCustomAction, false));
+    setCurrent(new ActivePopup(picked, s.getContext(), s.onDeepLink, s.onCustomAction, false));
   }
 
   public void showTest(PopupContent content) {
+    runOnMain(() -> showTestOnMain(content));
+  }
+
+  private void showTestOnMain(PopupContent content) {
     testCount++;
     InAppPopup popup =
         new InAppPopup(
@@ -489,6 +591,10 @@ public final class OptikpiInAppController {
   }
 
   public void didDraw(ActivePopup active) {
+    runOnMain(() -> didDrawOnMain(active));
+  }
+
+  private void didDrawOnMain(ActivePopup active) {
     if (current != active || active.drawn) {
       return;
     }
@@ -515,7 +621,7 @@ public final class OptikpiInAppController {
     track(active, PopupEventType.impression, null);
     Integer autoDismiss = active.getContent().autoDismissSec;
     if (autoDismiss != null) {
-      Runnable task = () -> close(active, true);
+      Runnable task = () -> closeOnMain(active, true);
       active.autoDismissTask = task;
       main.postDelayed(task, autoDismiss * 1000L);
     }
@@ -538,6 +644,14 @@ public final class OptikpiInAppController {
   }
 
   public boolean close(ActivePopup active, boolean dismissed) {
+    if (isOnMain()) {
+      return closeOnMain(active, dismissed);
+    }
+    main.post(() -> closeOnMain(active, dismissed));
+    return false;
+  }
+
+  private boolean closeOnMain(ActivePopup active, boolean dismissed) {
     if (current != active) {
       return false;
     }
@@ -549,10 +663,14 @@ public final class OptikpiInAppController {
   }
 
   public void tapButton(ActivePopup active, int index) {
+    runOnMain(() -> tapButtonOnMain(active, index));
+  }
+
+  private void tapButtonOnMain(ActivePopup active, int index) {
     if (index < 0 || index >= active.getContent().buttons.size()) {
       return;
     }
-    if (!close(active, false)) {
+    if (!closeOnMain(active, false)) {
       return;
     }
     PopupButton button = active.getContent().buttons.get(index);
@@ -563,11 +681,15 @@ public final class OptikpiInAppController {
   }
 
   public void tapImage(ActivePopup active) {
+    runOnMain(() -> tapImageOnMain(active));
+  }
+
+  private void tapImageOnMain(ActivePopup active) {
     PopupAction action = active.getContent().image != null ? active.getContent().image.tapAction : null;
     if (action == null && active.getContent().layout != PopupLayout.imageOnly) {
       return;
     }
-    if (!close(active, false)) {
+    if (!closeOnMain(active, false)) {
       return;
     }
     track(active, PopupEventType.click, null);
@@ -616,7 +738,7 @@ public final class OptikpiInAppController {
     workers.execute(
         () -> {
           if (events.enqueue(event, context.workspaceId, context.playerId)) {
-            scheduleFlush();
+            main.post(this::scheduleFlush);
           }
         });
   }
@@ -639,20 +761,23 @@ public final class OptikpiInAppController {
   }
 
   private void flush(Session s) {
-    if (s.paused || !inForeground) {
+    if (s.isPaused() || !inForeground) {
       return;
     }
     workers.execute(
         () -> {
           // This task may have waited behind a fetch or an image load: the app can have gone to
           // the background, the session ended, or an earlier request been refused since.
-          if (session != s || s.paused || !inForeground) {
+          if (session != s || !inForeground) {
             return;
           }
           // The request and the pause decision must use the same token: setPlayerToken can swap
-          // s.context while the POST is in flight, and a refusal of the old token says nothing
-          // about the new one.
-          PopupRequestContext sentWith = s.context;
+          // the session's context while the POST is in flight, and a refusal of the old token says
+          // nothing about the new one.
+          PopupRequestContext sentWith = s.activeContext();
+          if (sentWith == null) {
+            return;
+          }
           try {
             events.flush(s.source, sentWith);
           } catch (PopupHttpException e) {
@@ -669,8 +794,12 @@ public final class OptikpiInAppController {
   }
 
   private void flushQuiet(Session s) {
+    PopupRequestContext context = s.activeContext();
+    if (context == null) {
+      return;
+    }
     try {
-      events.flush(s.source, s.context);
+      events.flush(s.source, context);
     } catch (Exception e) {
       InAppLog.log("flush failed: " + e);
     }

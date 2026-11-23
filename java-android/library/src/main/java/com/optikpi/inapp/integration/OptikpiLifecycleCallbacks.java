@@ -80,7 +80,7 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
    * woken for a background component must not fetch.
    */
   public synchronized void syncForeground(boolean processInForeground) {
-    if (started.isEmpty()) {
+    if (!observedActivity && started.isEmpty()) {
       controller.setForeground(processInForeground);
     }
   }

@@ -4,19 +4,18 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.Application;
 import android.content.Context;
-import android.os.Handler;
-import android.os.Looper;
 import com.optikpi.inapp.integration.OptikpiLifecycleCallbacks;
 import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.source.MockPopupSource;
 import com.optikpi.inapp.source.PopupSource;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
 /** OptiKPI in-app pop-ups for Java Android. See README.md for the five-step integration. */
 public final class OptikpiInApp {
-  private static OptikpiLifecycleCallbacks lifecycle;
+  private static volatile OptikpiLifecycleCallbacks lifecycle;
 
   private OptikpiInApp() {}
 
@@ -61,29 +60,27 @@ public final class OptikpiInApp {
     Context app = context.getApplicationContext();
     OptikpiInAppController ctrl = OptikpiInAppController.getInstance(app);
     PopupSource resolved = source != null ? source : ctrl.defaultHttpSource();
-    if (app instanceof Application) {
-      OptikpiLifecycleCallbacks callbacks = ensureLifecycle((Application) app, ctrl);
-      Activity running = activityOf(context);
-      // init can be called from a login callback on an I/O thread, and attaching the overlay
-      // touches the activity's views: that work belongs on the main thread.
-      boolean foreground = running == null && isProcessInForeground(app);
-      runOnMain(
-          () -> {
+    List<String> routes =
+        blockedRoutes != null
+            ? Collections.unmodifiableList(new ArrayList<>(blockedRoutes))
+            : Collections.emptyList();
+    OptikpiLifecycleCallbacks callbacks =
+        app instanceof Application ? ensureLifecycle((Application) app, ctrl) : null;
+    Activity running = activityOf(context);
+    // init can be called from a login callback on an I/O thread: adopting the activity touches its
+    // views, and starting the session must serialize with publish() on the main looper.
+    ctrl.runOnMain(
+        () -> {
+          if (callbacks != null) {
             if (running != null) {
               callbacks.adoptRunningActivity(running);
             } else {
-              callbacks.syncForeground(foreground);
+              callbacks.syncForeground(isProcessInForeground(app));
             }
-          });
-    }
-    ctrl.initWithToken(
-        apiKey,
-        playerToken,
-        baseUrl,
-        resolved,
-        onDeepLink,
-        onCustomAction,
-        blockedRoutes != null ? blockedRoutes : Collections.emptyList());
+          }
+          ctrl.initWithTokenOnMain(
+              apiKey, playerToken, baseUrl, resolved, onDeepLink, onCustomAction, routes);
+        });
   }
 
   public static void init(Context context, String apiKey, String playerToken, String baseUrl) {
@@ -99,20 +96,17 @@ public final class OptikpiInApp {
   }
 
   public static void didChangeRoute(Context context, String route) {
-    OptikpiLifecycleCallbacks callbacks = lifecycle;
-    if (callbacks != null) {
-      // So the activity gets this route back when it returns to the top (see onActivityResumed).
-      callbacks.routeReported(activityOf(context), route);
-    }
-    OptikpiInAppController.getInstance(context).didChangeRoute(route);
-  }
-
-  private static void runOnMain(Runnable work) {
-    if (Looper.myLooper() == Looper.getMainLooper()) {
-      work.run();
-    } else {
-      new Handler(Looper.getMainLooper()).post(work);
-    }
+    Activity activity = activityOf(context);
+    OptikpiInAppController ctrl = OptikpiInAppController.getInstance(context);
+    ctrl.runOnMain(
+        () -> {
+          OptikpiLifecycleCallbacks callbacks = lifecycle;
+          if (callbacks != null) {
+            // So the activity gets this route back when it returns to the top (see onActivityResumed).
+            callbacks.routeReported(activity, route);
+          }
+          ctrl.didChangeRouteOnMain(route);
+        });
   }
 
   /**
