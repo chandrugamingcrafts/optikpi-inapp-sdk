@@ -651,7 +651,7 @@ public final class OptikpiInAppController {
     workers.execute(
         () -> {
           try {
-            shown.markShown(active.popup.id);
+            shown.markShown(active.popup.id, active.popup.expiresAt);
           } catch (Exception e) {
             InAppLog.log("could not remember " + active.popup.id + ": " + e);
           }
@@ -811,7 +811,10 @@ public final class OptikpiInAppController {
             return;
           }
           try {
-            events.flush(s.source, sentWith);
+            // Re-asked before every batch: a long queue takes several requests, and the app can
+            // be backgrounded, the session ended or the token refused while they go out.
+            events.flush(
+                s.source, sentWith, () -> session == s && inForeground && !s.isPaused());
           } catch (PopupHttpException e) {
             if (e.isAuthFailure()) {
               if (!pauseIfCurrent(s, sentWith) && session == s) {

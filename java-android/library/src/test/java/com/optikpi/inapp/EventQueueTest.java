@@ -110,4 +110,24 @@ public class EventQueueTest {
     queue.flush(source, player("ws", "p1"));
     assertEquals(List.of(2, 2, 1), batchSizes);
   }
+
+  @Test
+  public void stopsBetweenBatchesWhenNoLongerEligible() throws Exception {
+    EventQueue queue = new EventQueue(context, 2);
+    for (int i = 0; i < 6; i++) {
+      queue.enqueue(impression("trk-" + i), "ws", "p1");
+    }
+    RecordingSource source = new RecordingSource();
+    int[] asked = {0};
+    // Eligible for the first batch only, as when the app goes to the background mid-flush.
+    queue.flush(source, player("ws", "p1"), () -> asked[0]++ < 1);
+
+    assertEquals(2, source.sent.size());
+    assertEquals(4, queue.length());
+
+    // The rest goes at the next eligible flush.
+    queue.flush(source, player("ws", "p1"));
+    assertEquals(6, source.sent.size());
+    assertEquals(0, queue.length());
+  }
 }

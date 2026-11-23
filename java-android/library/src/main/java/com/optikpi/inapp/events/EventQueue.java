@@ -12,6 +12,7 @@ import java.util.Iterator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.function.BooleanSupplier;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -37,6 +38,7 @@ public final class EventQueue {
   private boolean flushing;
   private PopupSource pendingSource;
   private PopupRequestContext pendingContext;
+  private BooleanSupplier pendingEligible;
 
   public EventQueue(Context context, int batchSize) {
     prefs =
@@ -117,22 +119,35 @@ public final class EventQueue {
    * token or key throws the {@link PopupHttpException}, from the last pass only, so the caller can
    * pause.
    */
-  public synchronized void flush(PopupSource source, PopupRequestContext context)
+  public void flush(PopupSource source, PopupRequestContext context) throws Exception {
+    flush(source, context, () -> true);
+  }
+
+  /**
+   * As {@link #flush(PopupSource, PopupRequestContext)}, but {@code eligible} is asked before every
+   * batch and the flush stops, leaving the rest queued, as soon as it says no (the app went to the
+   * background, the session ended or was paused).
+   */
+  public synchronized void flush(
+      PopupSource source, PopupRequestContext context, BooleanSupplier eligible)
       throws Exception {
     if (flushing) {
       pendingSource = source;
       pendingContext = context;
+      pendingEligible = eligible;
       return;
     }
     flushing = true;
     try {
       PopupSource argsSource = source;
       PopupRequestContext argsContext = context;
+      BooleanSupplier argsEligible = eligible;
       while (true) {
         pendingSource = null;
         pendingContext = null;
+        pendingEligible = null;
         try {
-          flushOnce(argsSource, argsContext);
+          flushOnce(argsSource, argsContext, argsEligible);
         } catch (PopupHttpException e) {
           if (pendingSource == null) {
             throw e;
@@ -143,13 +158,16 @@ public final class EventQueue {
         }
         argsSource = pendingSource;
         argsContext = pendingContext;
+        argsEligible = pendingEligible;
       }
     } finally {
       flushing = false;
     }
   }
 
-  private void flushOnce(PopupSource source, PopupRequestContext context) throws Exception {
+  private void flushOnce(
+      PopupSource source, PopupRequestContext context, BooleanSupplier eligible)
+      throws Exception {
     List<QueuedItem> items = new ArrayList<>();
     for (String raw : readList(QUEUE_KEY)) {
       QueuedItem item = QueuedItem.tryParse(raw);
@@ -160,6 +178,10 @@ public final class EventQueue {
       }
     }
     for (int start = 0; start < items.size(); start += batchSize) {
+      if (!eligible.getAsBoolean()) {
+        InAppLog.log("event flush stopped between batches: not eligible to send");
+        return;
+      }
       int end = Math.min(start + batchSize, items.size());
       List<QueuedItem> batch = items.subList(start, end);
       List<PopupEvent> events = new ArrayList<>();

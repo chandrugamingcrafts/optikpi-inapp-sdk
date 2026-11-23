@@ -1,7 +1,6 @@
 package com.optikpi.inapp;
 
 import android.app.Activity;
-import android.app.ActivityManager;
 import android.app.Application;
 import android.content.Context;
 import com.optikpi.inapp.integration.OptikpiLifecycleCallbacks;
@@ -72,10 +71,11 @@ public final class OptikpiInApp {
     ctrl.runOnMain(
         () -> {
           if (callbacks != null) {
+            // With no activity to adopt, foreground stays as the lifecycle callbacks have seen it:
+            // process importance is not used, since a receiver or a foreground service reports the
+            // same importance as a visible app with no activity on screen.
             if (running != null) {
               callbacks.adoptRunningActivity(running);
-            } else {
-              callbacks.syncForeground(isProcessInForeground(app));
             }
           }
           ctrl.initWithTokenOnMain(
@@ -107,22 +107,6 @@ public final class OptikpiInApp {
           }
           ctrl.didChangeRouteOnMain(route);
         });
-  }
-
-  /**
-   * Whether this process is what the user is looking at. A process started for a service,
-   * receiver or job is not, however early {@code init} runs.
-   */
-  private static boolean isProcessInForeground(Context context) {
-    ActivityManager.RunningAppProcessInfo info = new ActivityManager.RunningAppProcessInfo();
-    try {
-      ActivityManager.getMyMemoryState(info);
-    } catch (RuntimeException e) {
-      return false;
-    }
-    // IMPORTANCE_FOREGROUND is a process with something on screen the user is using. A foreground
-    // service alone is 125, a visible-but-unfocused process 200: neither is showing us a pop-up.
-    return info.importance <= ActivityManager.RunningAppProcessInfo.IMPORTANCE_FOREGROUND;
   }
 
   public static void showTest(Context context, PopupContent content) {

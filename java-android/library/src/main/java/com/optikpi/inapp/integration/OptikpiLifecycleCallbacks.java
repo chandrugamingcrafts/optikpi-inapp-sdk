@@ -76,17 +76,6 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     }
   }
 
-  /**
-   * Seeds the foreground state when {@code init} had no activity to adopt (an {@code Application}
-   * context): until an activity starts there is nothing to say the app is on screen, and a process
-   * woken for a background component must not fetch.
-   */
-  public synchronized void syncForeground(boolean processInForeground) {
-    if (!observedActivity && started.isEmpty()) {
-      controller.setForeground(processInForeground);
-    }
-  }
-
   /** The app reported a route: remember it for [activity], or for the top one when null. */
   public synchronized void routeReported(Activity activity, String route) {
     Activity target = activity != null ? activity : top.get();

@@ -2,70 +2,124 @@ package com.optikpi.inapp.logic;
 
 import android.content.Context;
 import android.content.SharedPreferences;
-import java.util.ArrayList;
-import java.util.Iterator;
+import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.function.LongSupplier;
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
 /**
  * Pop-up ids already drawn on this device, so a refetch never shows one again. Kept across logins:
  * the server only ever returns a pop-up to the player it was sent to.
  *
- * <p>The ids are stored as an ordered JSON array (a {@code StringSet} has no order), so when the cap
- * is passed the oldest ids go first and a just-shown id is never the one dropped.
+ * <p>An id is kept for as long as the server could still return that pop-up. {@code API.md} lets
+ * the server keep returning a pop-up that already has an impression, so an id with no {@code
+ * expiresAt} is kept for good: dropping it (as a count cap would) lets the pop-up be picked again.
+ * An id with an {@code expiresAt} goes once that time passes, because {@code ShowRules} refuses an
+ * expired pop-up anyway; that is the bound on the store's size.
+ *
+ * <p>Stored as an ordered JSON array. An entry is a plain string (no expiry; also the format older
+ * versions wrote) or {@code {"id": ..., "exp": epochMillis}}.
  */
 public final class ShownStore {
   public static final String KEY = "optikpi_inapp.shown";
-  public static final int MAX_IDS = 500;
 
   private final SharedPreferences prefs;
-  private Set<String> cache;
+  private final LongSupplier clock;
+
+  /** id to the epoch millis it expires at, or {@link #NEVER}. Insertion-ordered, oldest first. */
+  private Map<String, Long> entries;
+
+  private static final long NEVER = 0L;
 
   public ShownStore(Context context) {
+    this(context, System::currentTimeMillis);
+  }
+
+  /** For tests, which need to move the clock. */
+  public ShownStore(Context context, LongSupplier clock) {
     prefs =
         context.getApplicationContext().getSharedPreferences("optikpi_inapp", Context.MODE_PRIVATE);
+    this.clock = clock;
   }
 
-  /** Insertion-ordered, oldest first. */
-  public synchronized Set<String> load() {
-    if (cache != null) {
-      return cache;
-    }
-    Set<String> ids = new LinkedHashSet<>();
-    try {
-      String raw = prefs.getString(KEY, null);
-      if (raw != null) {
-        JSONArray array = new JSONArray(raw);
-        for (int i = 0; i < array.length(); i++) {
-          String id = array.optString(i, null);
-          if (id != null) {
-            ids.add(id);
+  private Map<String, Long> entries() {
+    if (entries == null) {
+      Map<String, Long> read = new LinkedHashMap<>();
+      try {
+        String raw = prefs.getString(KEY, null);
+        if (raw != null) {
+          JSONArray array = new JSONArray(raw);
+          for (int i = 0; i < array.length(); i++) {
+            Object item = array.opt(i);
+            if (item instanceof String) {
+              read.put((String) item, NEVER);
+            } else if (item instanceof JSONObject) {
+              String id = ((JSONObject) item).optString("id", null);
+              if (id != null) {
+                read.put(id, ((JSONObject) item).optLong("exp", NEVER));
+              }
+            }
           }
         }
+      } catch (ClassCastException | JSONException e) {
+        // An unreadable value (another format) starts the list over.
+        read.clear();
       }
-    } catch (ClassCastException | JSONException e) {
-      // An unreadable value (another format) starts the list over.
-      ids.clear();
+      entries = read;
     }
-    cache = ids;
-    return cache;
+    return entries;
   }
 
-  public synchronized void markShown(String id) {
-    Set<String> ids = load();
-    if (!ids.add(id)) {
+  /** Drops what has expired; true when something went. */
+  private boolean prune(Map<String, Long> map) {
+    long now = clock.getAsLong();
+    return map.values().removeIf(exp -> exp != NEVER && exp <= now);
+  }
+
+  /** Ids still worth remembering, oldest first. */
+  public synchronized Set<String> load() {
+    Map<String, Long> map = entries();
+    if (prune(map)) {
+      persist(map);
+    }
+    return new LinkedHashSet<>(map.keySet());
+  }
+
+  /**
+   * Remembers {@code id}, drawn now. {@code expiresAt} is when the pop-up stops being valid, or
+   * null when it never does.
+   */
+  public synchronized void markShown(String id, Instant expiresAt) {
+    Map<String, Long> map = entries();
+    boolean pruned = prune(map);
+    if (map.containsKey(id)) {
+      if (pruned) {
+        persist(map);
+      }
       return;
     }
-    if (ids.size() > MAX_IDS) {
-      int drop = ids.size() - MAX_IDS;
-      Iterator<String> oldest = ids.iterator();
-      for (int i = 0; i < drop && oldest.hasNext(); i++) {
-        oldest.next();
-        oldest.remove();
+    map.put(id, expiresAt == null ? NEVER : Math.max(1L, expiresAt.toEpochMilli()));
+    persist(map);
+  }
+
+  private void persist(Map<String, Long> map) {
+    JSONArray array = new JSONArray();
+    try {
+      for (Map.Entry<String, Long> entry : map.entrySet()) {
+        if (entry.getValue() == NEVER) {
+          array.put(entry.getKey());
+        } else {
+          array.put(new JSONObject().put("id", entry.getKey()).put("exp", entry.getValue()));
+        }
       }
+    } catch (JSONException e) {
+      return;
     }
-    prefs.edit().putString(KEY, new JSONArray(new ArrayList<>(ids)).toString()).apply();
+    prefs.edit().putString(KEY, array.toString()).apply();
   }
 }

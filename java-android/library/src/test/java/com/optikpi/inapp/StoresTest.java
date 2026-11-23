@@ -12,6 +12,7 @@ import com.optikpi.inapp.logic.PlayerTokenClaims;
 import com.optikpi.inapp.logic.ShownStore;
 import com.optikpi.inapp.render.BoundedBitmapCache;
 import java.util.ArrayList;
+import java.time.Instant;
 import java.util.List;
 import java.util.Set;
 import org.junit.Test;
@@ -24,43 +25,58 @@ public class StoresTest {
   private final Context context = RuntimeEnvironment.getApplication();
 
   @Test
-  public void shownStoreDropsTheOldestIdsFirst() {
+  public void shownStoreKeepsEveryIdThatNeverExpires() {
+    // The server may keep returning a pop-up it has an impression for: forgetting the id would show
+    // it again, so a pop-up with no expiry is remembered however many have been shown since.
     ShownStore store = new ShownStore(context);
-    for (int i = 0; i < ShownStore.MAX_IDS + 3; i++) {
-      store.markShown("id-" + i);
+    for (int i = 0; i < 1200; i++) {
+      store.markShown("id-" + i, null);
     }
     Set<String> ids = store.load();
-    assertEquals(ShownStore.MAX_IDS, ids.size());
-    assertFalse(ids.contains("id-0"));
-    assertFalse(ids.contains("id-2"));
-    assertTrue(ids.contains("id-3"));
-    // The id just shown is never the one that goes.
-    assertTrue(ids.contains("id-" + (ShownStore.MAX_IDS + 2)));
+    assertEquals(1200, ids.size());
+    assertTrue(ids.contains("id-0"));
+    assertTrue(new ShownStore(context).load().contains("id-0"));
   }
 
   @Test
-  public void shownStoreKeepsItsOrderAcrossARestart() {
-    ShownStore first = new ShownStore(context);
-    for (int i = 0; i < ShownStore.MAX_IDS + 3; i++) {
-      first.markShown("id-" + i);
-    }
-    List<String> reloaded = new ArrayList<>(new ShownStore(context).load());
-    assertEquals(ShownStore.MAX_IDS, reloaded.size());
-    assertEquals("id-3", reloaded.get(0));
-    assertEquals("id-" + (ShownStore.MAX_IDS + 2), reloaded.get(reloaded.size() - 1));
+  public void shownStoreDropsAnIdOnceItsPopupHasExpired() {
+    long[] now = {1_000_000L};
+    ShownStore store = new ShownStore(context, () -> now[0]);
+    store.markShown("short", Instant.ofEpochMilli(now[0] + 1_000));
+    store.markShown("long", Instant.ofEpochMilli(now[0] + 100_000));
+    store.markShown("forever", null);
+    assertEquals(3, store.load().size());
 
-    // Past the cap again after the restart: the oldest still go first.
-    ShownStore second = new ShownStore(context);
-    second.markShown("newest");
-    assertFalse(second.load().contains("id-3"));
-    assertTrue(second.load().contains("newest"));
+    now[0] += 2_000;
+    Set<String> ids = store.load();
+    assertFalse(ids.contains("short"));
+    assertTrue(ids.contains("long"));
+    assertTrue(ids.contains("forever"));
+
+    // What was dropped stays dropped after a restart, and the rest keeps its order.
+    now[0] += 200_000;
+    List<String> reloaded = new ArrayList<>(new ShownStore(context, () -> now[0]).load());
+    assertEquals(List.of("forever"), reloaded);
+  }
+
+  @Test
+  public void shownStoreReadsTheIdsAnOlderVersionStored() {
+    context
+        .getSharedPreferences("optikpi_inapp", Context.MODE_PRIVATE)
+        .edit()
+        .putString(ShownStore.KEY, "[\"a\",\"b\"]")
+        .commit();
+    ShownStore store = new ShownStore(context);
+    assertEquals(List.of("a", "b"), new ArrayList<>(store.load()));
+    store.markShown("c", null);
+    assertEquals(List.of("a", "b", "c"), new ArrayList<>(new ShownStore(context).load()));
   }
 
   @Test
   public void shownStoreIgnoresAnId_alreadyThere() {
     ShownStore store = new ShownStore(context);
-    store.markShown("a");
-    store.markShown("a");
+    store.markShown("a", null);
+    store.markShown("a", null);
     assertEquals(1, store.load().size());
   }
 
