@@ -89,8 +89,12 @@ public final class PopupOverlayView extends FrameLayout {
     ViewCompat.setOnApplyWindowInsetsListener(
         this,
         (v, windowInsets) -> {
+          // The overlay sits at the top of the window, where a parent may already have consumed
+          // the insets it passes down: the window's own are the truth when we are attached.
+          WindowInsetsCompat real = ViewCompat.getRootWindowInsets(v);
+          WindowInsetsCompat effective = real != null ? real : windowInsets;
           Insets bars =
-              windowInsets.getInsets(
+              effective.getInsets(
                   WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
           if (bars.left != insetL
               || bars.top != insetT
@@ -400,7 +404,9 @@ public final class PopupOverlayView extends FrameLayout {
       text.addView(body(12, true));
     }
     row.addView(text, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
-    View buttons = buttons(content.buttons, true);
+    // The action takes at most 45% of the banner, as in the Flutter renderer, so a long label is
+    // cut short and never squeezes out the text or pushes the close target off the card.
+    View buttons = buttons(content.buttons, true, Math.round(width * 0.45f));
     if (buttons != null) {
       LinearLayout.LayoutParams buttonParams =
           new LinearLayout.LayoutParams(
@@ -552,10 +558,16 @@ public final class PopupOverlayView extends FrameLayout {
 
   /** Stacked full width for a card, or a compact row for a banner or toast. Null with none. */
   private View buttons(java.util.List<PopupButton> list, boolean compact) {
+    return buttons(list, compact, 0);
+  }
+
+  /** As above; a positive [maxWidth] caps how wide the row of buttons can get. */
+  private View buttons(java.util.List<PopupButton> list, boolean compact, int maxWidth) {
     if (list.isEmpty()) {
       return null;
     }
-    LinearLayout container = new LinearLayout(getContext());
+    LinearLayout container =
+        maxWidth > 0 ? new MaxWidthLinearLayout(getContext(), maxWidth) : new LinearLayout(getContext());
     container.setOrientation(compact ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
     if (!compact) {
       container.setPadding(0, dp(16), 0, 0);
@@ -700,6 +712,28 @@ public final class PopupOverlayView extends FrameLayout {
     target.addView(
         glyph, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
     return target;
+  }
+
+  /** A row that sizes to its content, up to {@code maxWidth}. */
+  private static final class MaxWidthLinearLayout extends LinearLayout {
+    private final int maxWidth;
+
+    MaxWidthLinearLayout(Context context, int maxWidth) {
+      super(context);
+      this.maxWidth = maxWidth;
+    }
+
+    @Override
+    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+      int mode = MeasureSpec.getMode(widthMeasureSpec);
+      int size = MeasureSpec.getSize(widthMeasureSpec);
+      if (mode == MeasureSpec.UNSPECIFIED) {
+        widthMeasureSpec = MeasureSpec.makeMeasureSpec(maxWidth, MeasureSpec.AT_MOST);
+      } else if (size > maxWidth) {
+        widthMeasureSpec = MeasureSpec.makeMeasureSpec(maxWidth, MeasureSpec.AT_MOST);
+      }
+      super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    }
   }
 
   /** A card that sizes to its content, up to {@code maxHeight}, then scrolls inside. */

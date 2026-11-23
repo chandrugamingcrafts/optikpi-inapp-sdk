@@ -36,8 +36,13 @@ public class LifecycleTest {
             .put("title", "Hello"));
   }
 
+  /** The window's original content: the host's overlay is added after it. */
+  private static View pageRoot(Activity activity) {
+    return ((ViewGroup) activity.getWindow().getDecorView()).getChildAt(0);
+  }
+
   private static int overlays(Activity activity) {
-    ViewGroup content = activity.findViewById(android.R.id.content);
+    ViewGroup content = (ViewGroup) activity.getWindow().getDecorView();
     int count = 0;
     for (int i = 0; i < content.getChildCount(); i++) {
       View host = content.getChildAt(i);
@@ -113,12 +118,12 @@ public class LifecycleTest {
     activity.setContentView(page);
     OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
     new OptikpiLifecycleCallbacks(controller).adoptRunningActivity(activity);
-    int original = page.getImportantForAccessibility();
+    int original = pageRoot(activity).getImportantForAccessibility();
 
     controller.showTest(modal());
     shadowOf(Looper.getMainLooper()).idle();
     assertEquals(
-        View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, page.getImportantForAccessibility());
+        View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, pageRoot(activity).getImportantForAccessibility());
 
     controller.showTest(
         PopupContent.tryParse(
@@ -128,7 +133,7 @@ public class LifecycleTest {
                 .put("size", "md")
                 .put("title", "Hi")));
     shadowOf(Looper.getMainLooper()).idle();
-    assertEquals(original, page.getImportantForAccessibility());
+    assertEquals(original, pageRoot(activity).getImportantForAccessibility());
     PopupHost.detach(activity);
   }
 
@@ -188,13 +193,13 @@ public class LifecycleTest {
     View page = new View(activity);
     activity.setContentView(page);
     OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
-    int original = page.getImportantForAccessibility();
+    int original = pageRoot(activity).getImportantForAccessibility();
     PopupHost.attach(activity, controller);
 
     controller.showTest(modal()); // queues the host's work on the main looper
     PopupHost.detach(activity); // the activity stops before it runs
     shadowOf(Looper.getMainLooper()).idle();
 
-    assertEquals(original, page.getImportantForAccessibility());
+    assertEquals(original, pageRoot(activity).getImportantForAccessibility());
   }
 }

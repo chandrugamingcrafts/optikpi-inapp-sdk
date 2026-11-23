@@ -9,6 +9,7 @@ import static org.junit.Assert.fail;
 
 import com.optikpi.inapp.logic.PlayerTokenClaims;
 import com.optikpi.inapp.model.InAppPopup;
+import com.optikpi.inapp.model.PopupClose;
 import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.model.PopupFetchResult;
 import com.optikpi.inapp.model.PopupImage;
@@ -160,5 +161,32 @@ public class ParsingTest {
     InAppPopup popup = InAppPopup.tryParse(json);
     assertFalse(popup.isExpiredAt(Instant.parse("2026-10-01T23:59:00Z")));
     assertTrue(popup.isExpiredAt(Instant.parse("2026-10-02T00:00:00Z")));
+  }
+
+  @Test
+  public void aHugePollingIntervalClampsInsteadOfWrapping() throws Exception {
+    PopupFetchResult result =
+        PopupFetchResult.fromJson(
+            new org.json.JSONObject("{\"popups\":[],\"nextCheckAfterSec\":5000000000}"));
+    assertEquals(Integer.MAX_VALUE, (int) result.nextCheckAfterSec);
+    PopupFetchResult negative =
+        PopupFetchResult.fromJson(
+            new org.json.JSONObject("{\"popups\":[],\"nextCheckAfterSec\":-5000000000}"));
+    assertEquals(Integer.MIN_VALUE, (int) negative.nextCheckAfterSec);
+  }
+
+  @Test
+  public void anInvalidCloseFlagKeepsItsDefault() throws Exception {
+    for (String flag : new String[] {"null", "\"false\"", "0", "{}"}) {
+      org.json.JSONObject json =
+          new org.json.JSONObject("{\"tapOutsideToClose\":" + flag + ",\"show\":" + flag + "}");
+      PopupClose close = PopupClose.parse(json);
+      assertTrue("tapOutsideToClose " + flag, close.tapOutsideToClose);
+      assertTrue("show " + flag, close.show);
+    }
+    PopupClose off =
+        PopupClose.parse(new org.json.JSONObject("{\"tapOutsideToClose\":false,\"show\":false}"));
+    assertFalse(off.tapOutsideToClose);
+    assertFalse(off.show);
   }
 }

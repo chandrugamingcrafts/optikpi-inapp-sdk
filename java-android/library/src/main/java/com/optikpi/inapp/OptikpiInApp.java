@@ -4,6 +4,8 @@ import android.app.Activity;
 import android.app.ActivityManager;
 import android.app.Application;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import com.optikpi.inapp.integration.OptikpiLifecycleCallbacks;
 import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.source.MockPopupSource;
@@ -62,11 +64,17 @@ public final class OptikpiInApp {
     if (app instanceof Application) {
       OptikpiLifecycleCallbacks callbacks = ensureLifecycle((Application) app, ctrl);
       Activity running = activityOf(context);
-      if (running != null) {
-        callbacks.adoptRunningActivity(running);
-      } else {
-        callbacks.syncForeground(isProcessInForeground(app));
-      }
+      // init can be called from a login callback on an I/O thread, and attaching the overlay
+      // touches the activity's views: that work belongs on the main thread.
+      boolean foreground = running == null && isProcessInForeground(app);
+      runOnMain(
+          () -> {
+            if (running != null) {
+              callbacks.adoptRunningActivity(running);
+            } else {
+              callbacks.syncForeground(foreground);
+            }
+          });
     }
     ctrl.initWithToken(
         apiKey,
@@ -97,6 +105,14 @@ public final class OptikpiInApp {
       callbacks.routeReported(activityOf(context), route);
     }
     OptikpiInAppController.getInstance(context).didChangeRoute(route);
+  }
+
+  private static void runOnMain(Runnable work) {
+    if (Looper.myLooper() == Looper.getMainLooper()) {
+      work.run();
+    } else {
+      new Handler(Looper.getMainLooper()).post(work);
+    }
   }
 
   /**

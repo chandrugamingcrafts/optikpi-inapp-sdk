@@ -36,7 +36,10 @@ public final class PopupFetchResult {
     }
     Integer nextCheck = null;
     if (next instanceof Number n && Double.isFinite(n.doubleValue())) {
-      nextCheck = (int) Math.round(n.doubleValue());
+      // Clamp before narrowing: a cast of a huge long wraps to a negative, which the throttle
+      // would read as "poll every 30 s" instead of "wait the maximum".
+      nextCheck =
+          (int) Math.max(Integer.MIN_VALUE, Math.min(Integer.MAX_VALUE, Math.round(n.doubleValue())));
     }
     return new PopupFetchResult(Collections.unmodifiableList(popups), nextCheck);
   }

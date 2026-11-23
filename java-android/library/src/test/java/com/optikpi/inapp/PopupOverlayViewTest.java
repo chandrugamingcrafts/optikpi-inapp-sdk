@@ -9,6 +9,8 @@ import android.content.Context;
 import android.view.View;
 import android.view.WindowInsets;
 import android.widget.FrameLayout;
+import android.widget.TextView;
+import org.json.JSONArray;
 import android.view.ViewGroup;
 import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.render.PopupOverlayView;
@@ -153,5 +155,53 @@ public class PopupOverlayViewTest {
     assertEquals(32, sheet.getPaddingBottom());
     // The usable height shrank by the inset, and the sheet grew back by it to run under the bar.
     assertTrue(sheet.getLayoutParams().height >= before - 32);
+  }
+
+  private static TextView findText(View view, String text) {
+    if (view instanceof TextView && text.contentEquals(((TextView) view).getText())) {
+      return (TextView) view;
+    }
+    if (view instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup) view;
+      for (int i = 0; i < group.getChildCount(); i++) {
+        TextView found = findText(group.getChildAt(i), text);
+        if (found != null) {
+          return found;
+        }
+      }
+    }
+    return null;
+  }
+
+  @Test
+  public void aLongBannerActionCannotCrowdOutTheTextOrTheCloseButton() throws Exception {
+    String label = "A very long call to action label that goes on and on and on";
+    JSONObject json =
+        new JSONObject()
+            .put("version", 1)
+            .put("layout", "banner")
+            .put("size", "md")
+            .put("title", "Weekend offer")
+            .put(
+                "buttons",
+                new JSONArray()
+                    .put(
+                        new JSONObject()
+                            .put("label", label)
+                            .put("style", "primary")
+                            .put("action", new JSONObject().put("type", "dismiss"))));
+    PopupOverlayView view = new PopupOverlayView(context, PopupContent.tryParse(json), null, NO_OP);
+    int width = 600;
+    view.measure(
+        View.MeasureSpec.makeMeasureSpec(width, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.AT_MOST));
+    view.layout(0, 0, width, view.getMeasuredHeight());
+
+    TextView action = findText(view, label);
+    TextView title = findText(view, "Weekend offer");
+    assertNotNull(action);
+    assertNotNull(title);
+    assertTrue("action capped at 45%", action.getWidth() <= Math.round(width * 0.45f));
+    assertTrue("title keeps room", title.getWidth() > 0);
   }
 }

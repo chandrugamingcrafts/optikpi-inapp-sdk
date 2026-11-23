@@ -44,8 +44,8 @@ the repo. The `INTERNET` permission is declared by the library and merges into y
 
 **2. Run a Gradle sync.**
 
-**3. Register the hooks once**, in your `Application`, so pop-ups attach to every `Activity` (overlay on
-`android.R.id.content`):
+**3. Register the hooks once**, in your `Application`, so pop-ups attach to every `Activity` (the overlay
+goes on the window's decor view, so a blocking pop-up also covers an `ActionBar`):
 
 ```java
 public class App extends Application {

@@ -21,13 +21,16 @@ public final class PopupClose {
     if (map == null) {
       return new PopupClose(true, PopupClosePosition.topRight, true);
     }
-    boolean show = map.optBoolean("show", true);
+    Object showValue = map.opt("show");
+    boolean show = showValue instanceof Boolean ? (Boolean) showValue : true;
     PopupClosePosition position =
         PopupEnums.enumByName(PopupClosePosition.class, map.opt("position"));
     if (position == null) {
       position = PopupClosePosition.topRight;
     }
-    boolean tapOutside = map.has("tapOutsideToClose") ? map.optBoolean("tapOutsideToClose") : true;
+    // Only a real boolean counts: null or another type falls back to the default (true).
+    Object tapOutsideValue = map.opt("tapOutsideToClose");
+    boolean tapOutside = tapOutsideValue instanceof Boolean ? (Boolean) tapOutsideValue : true;
     return new PopupClose(show, position, tapOutside);
   }
 }

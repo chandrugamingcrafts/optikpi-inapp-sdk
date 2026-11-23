@@ -26,8 +26,10 @@ public final class PopupHost {
 
   public static void attach(Activity activity, OptikpiInAppController controller) {
     detach(activity);
-    View content = activity.findViewById(android.R.id.content);
-    if (!(content instanceof ViewGroup root)) {
+    // The window's decor, not android.R.id.content: an ActionBar is a sibling of the content, and
+    // a blocking pop-up has to cover its Up and menu controls too.
+    View decor = activity.getWindow().getDecorView();
+    if (!(decor instanceof ViewGroup root)) {
       return;
     }
     FrameLayout overlay = new FrameLayout(activity);
