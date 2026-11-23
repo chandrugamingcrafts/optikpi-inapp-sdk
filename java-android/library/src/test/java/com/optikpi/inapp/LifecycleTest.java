@@ -223,4 +223,21 @@ public class LifecycleTest {
 
     assertEquals("/dashboard/blocked", controller.getRoute());
   }
+
+  @Test
+  public void onlyTheFirstObservedActivityInheritsAPreReportedRoute() {
+    ComponentActivity first = activityAt("app://first");
+    ComponentActivity second = activityAt("app://second");
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(first);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+    controller.didChangeRoute("/reported-first");
+
+    callbacks.onActivityStarted(first);
+    assertEquals("/reported-first", controller.getRoute());
+    callbacks.onActivityStopped(first);
+    // The screen the controller still holds belongs to the first activity, not the second.
+    callbacks.onActivityStarted(second);
+
+    assertEquals("app://second", controller.getRoute());
+  }
 }

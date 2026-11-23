@@ -86,7 +86,7 @@ public final class PopupContent {
     JSONArray buttonList = list(map.opt("buttons"));
     if (buttonList != null) {
       for (int i = 0; i < buttonList.length() && buttons.size() < spec.maxButtons; i++) {
-        PopupButton button = PopupButton.tryParse(buttonList.opt(i));
+        PopupButton button = PopupButton.tryParse(buttonList.opt(i), i);
         if (button != null) {
           buttons.add(button);
         }

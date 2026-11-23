@@ -15,6 +15,7 @@ import com.optikpi.inapp.logic.ShowRules;
 import com.optikpi.inapp.logic.ShownStore;
 import com.optikpi.inapp.model.InAppPopup;
 import com.optikpi.inapp.model.PopupAction;
+import com.optikpi.inapp.model.PopupButton;
 import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.model.PopupEnums.PopupLayout;
 import com.optikpi.inapp.model.PopupFetchResult;
@@ -331,7 +332,7 @@ public final class OptikpiInAppController {
   }
 
   private void maybeFetch(Session s) {
-    if (s.paused || s.fetching || !inForeground || !s.throttle.canFetch(SystemClock.elapsedRealtime())) {
+    if (session != s || s.paused || s.fetching || !inForeground || !s.throttle.canFetch(SystemClock.elapsedRealtime())) {
       return;
     }
     s.fetching = true;
@@ -554,8 +555,11 @@ public final class OptikpiInAppController {
     if (!close(active, false)) {
       return;
     }
-    track(active, PopupEventType.click, index);
-    perform(active, active.getContent().buttons.get(index).action);
+    PopupButton button = active.getContent().buttons.get(index);
+    // The event carries the button's place in the delivered array, which differs from [index]
+    // when an earlier button was dropped for an unsupported action.
+    track(active, PopupEventType.click, button.sourceIndex);
+    perform(active, button.action);
   }
 
   public void tapImage(ActivePopup active) {

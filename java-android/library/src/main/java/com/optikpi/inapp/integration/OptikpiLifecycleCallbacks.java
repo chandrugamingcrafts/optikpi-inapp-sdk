@@ -37,6 +37,13 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
 
   private WeakReference<Activity> top = new WeakReference<>(null);
 
+  /**
+   * Whether any activity has been seen. A cleared weak reference can't tell "never seen one" from
+   * "the last one was collected", and only the first activity may inherit a route the app
+   * reported before the callbacks existed.
+   */
+  private boolean observedActivity;
+
   public OptikpiLifecycleCallbacks(OptikpiInAppController controller) {
     this.controller = controller;
   }
@@ -62,7 +69,7 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     if (!PopupHost.isAttached(activity)) {
       PopupHost.attach(activity, controller);
       String route = currentRoute(activity);
-      top = new WeakReference<>(activity);
+      markTop(activity);
       controller.didChangeRoute(route);
     }
   }
@@ -86,9 +93,14 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     }
   }
 
+  private void markTop(Activity activity) {
+    top = new WeakReference<>(activity);
+    observedActivity = true;
+  }
+
   private String currentRoute(Activity activity) {
     String reported = routes.get(activity);
-    if (reported == null && top.get() == null) {
+    if (reported == null && !observedActivity) {
       // No activity has been seen yet, so a route the controller already holds was reported by the
       // app itself (before install, or before this first adoption): keep it, don't replace it
       // with the activity's class name.
@@ -138,7 +150,7 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     }
     PopupHost.attach(activity, controller);
     String route = currentRoute(activity);
-    top = new WeakReference<>(activity);
+    markTop(activity);
     controller.didChangeRoute(route);
   }
 
@@ -146,7 +158,7 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
   public synchronized void onActivityResumed(Activity activity) {
     // A dialog-themed or translucent activity closing leaves the one under it started, so it gets
     // no onStart: put its route back here, or the covering activity's route would stay in force.
-    top = new WeakReference<>(activity);
+    markTop(activity);
     controller.didChangeRoute(currentRoute(activity));
   }
 

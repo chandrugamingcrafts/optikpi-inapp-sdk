@@ -201,4 +201,19 @@ public class ParsingTest {
         PopupContent.tryParse(
             new JSONObject("{\"version\":1,\"layout\":\"modal\",\"title\":\"Hi\"}")));
   }
+
+  @Test
+  public void aSurvivingButtonKeepsItsPlaceInTheDeliveredArray() throws Exception {
+    PopupContent content =
+        PopupContent.tryParse(
+            new JSONObject(
+                "{\"version\":1,\"layout\":\"modal\",\"title\":\"Hi\",\"buttons\":["
+                    + "{\"label\":\"X\",\"style\":\"primary\",\"action\":{\"type\":\"teleport\"}},"
+                    + "{\"label\":\"Y\",\"style\":\"primary\",\"action\":{\"type\":\"dismiss\"}}]}"));
+    assertNotNull(content);
+    assertEquals(1, content.buttons.size());
+    assertEquals("Y", content.buttons.get(0).label);
+    // Rendered first, but delivered second: the click event must say 1.
+    assertEquals(1, content.buttons.get(0).sourceIndex);
+  }
 }
