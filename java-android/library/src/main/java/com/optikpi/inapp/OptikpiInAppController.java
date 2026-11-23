@@ -1,0 +1,609 @@
+package com.optikpi.inapp;
+
+import android.content.Context;
+import android.content.Intent;
+import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
+import com.optikpi.inapp.events.EventQueue;
+import com.optikpi.inapp.events.PopupEvent;
+import com.optikpi.inapp.events.PopupEventType;
+import com.optikpi.inapp.logic.FetchThrottle;
+import com.optikpi.inapp.logic.PlayerTokenClaims;
+import com.optikpi.inapp.logic.ShowRules;
+import com.optikpi.inapp.logic.ShownStore;
+import com.optikpi.inapp.model.InAppPopup;
+import com.optikpi.inapp.model.PopupAction;
+import com.optikpi.inapp.model.PopupContent;
+import com.optikpi.inapp.model.PopupEnums.PopupLayout;
+import com.optikpi.inapp.model.PopupFetchResult;
+import com.optikpi.inapp.render.PopupImageLoader;
+import com.optikpi.inapp.source.HttpPopupSource;
+import com.optikpi.inapp.source.PopupHttpException;
+import com.optikpi.inapp.source.PopupRequestContext;
+import com.optikpi.inapp.source.PopupSource;
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
+public final class OptikpiInAppController {
+  public static final long IMAGE_WAIT_MS = 10_000;
+  public static final long FLUSH_DELAY_MS = 2_000;
+
+  private static OptikpiInAppController instance;
+
+  private final Context appContext;
+  private final Handler main = new Handler(Looper.getMainLooper());
+  private final ExecutorService workers = Executors.newSingleThreadExecutor();
+  private final EventQueue events;
+  private final ShownStore shown;
+  private final PopupImageLoader images;
+  private final List<CurrentListener> listeners = new CopyOnWriteArrayList<>();
+
+  private Setup setup;
+  private Session session;
+  private String lastPlayerKey;
+  private ActivePopup current;
+  private boolean inForeground = true;
+  private Runnable flushTimer;
+  private int testCount;
+
+  private String route;
+  private int visit;
+  private boolean shownThisVisit;
+  private boolean picking;
+  private boolean pickAgain;
+
+  public interface CurrentListener {
+    void onChanged(ActivePopup active);
+  }
+
+  private static final class Setup {
+    final String apiKey;
+    final String baseUrl;
+    final PopupSource source;
+    final ActivePopup.DeepLinkHandler onDeepLink;
+    final ActivePopup.CustomActionHandler onCustomAction;
+    final List<String> blockedRoutes;
+
+    Setup(
+        String apiKey,
+        String baseUrl,
+        PopupSource source,
+        ActivePopup.DeepLinkHandler onDeepLink,
+        ActivePopup.CustomActionHandler onCustomAction,
+        List<String> blockedRoutes) {
+      this.apiKey = apiKey;
+      this.baseUrl = baseUrl;
+      this.source = source;
+      this.onDeepLink = onDeepLink;
+      this.onCustomAction = onCustomAction;
+      this.blockedRoutes = Collections.unmodifiableList(new ArrayList<>(blockedRoutes));
+    }
+  }
+
+  private static final class Session {
+    PopupRequestContext context;
+    final PopupSource source;
+    final ActivePopup.DeepLinkHandler onDeepLink;
+    final ActivePopup.CustomActionHandler onCustomAction;
+    final List<String> blockedRoutes;
+    final FetchThrottle throttle = new FetchThrottle();
+    List<InAppPopup> waiting = Collections.emptyList();
+    boolean fetching;
+    boolean paused;
+
+    Session(
+        PopupRequestContext context,
+        PopupSource source,
+        ActivePopup.DeepLinkHandler onDeepLink,
+        ActivePopup.CustomActionHandler onCustomAction,
+        List<String> blockedRoutes) {
+      this.context = context;
+      this.source = source;
+      this.onDeepLink = onDeepLink;
+      this.onCustomAction = onCustomAction;
+      this.blockedRoutes = blockedRoutes;
+    }
+  }
+
+  private OptikpiInAppController(Context context) {
+    appContext = context.getApplicationContext();
+    events = new EventQueue(appContext, 50);
+    shown = new ShownStore(appContext);
+    images = new PopupImageLoader();
+  }
+
+  public static synchronized OptikpiInAppController getInstance(Context context) {
+    if (instance == null) {
+      instance = new OptikpiInAppController(context);
+    }
+    return instance;
+  }
+
+  public static OptikpiInAppController getInstance() {
+    if (instance == null) {
+      throw new IllegalStateException("OptikpiInApp not initialised");
+    }
+    return instance;
+  }
+
+  public PopupImageLoader getImages() {
+    return images;
+  }
+
+  public ActivePopup getCurrent() {
+    return current;
+  }
+
+  public void addCurrentListener(CurrentListener listener) {
+    listeners.add(listener);
+  }
+
+  public void removeCurrentListener(CurrentListener listener) {
+    listeners.remove(listener);
+  }
+
+  private void setCurrent(ActivePopup value) {
+    current = value;
+    for (CurrentListener listener : listeners) {
+      listener.onChanged(value);
+    }
+  }
+
+  public void setForeground(boolean value) {
+    if (inForeground == value) {
+      return;
+    }
+    inForeground = value;
+    if (value) {
+      Session s = session;
+      if (s != null) {
+        flush(s);
+        fetchMoment();
+      }
+    }
+  }
+
+  public void initWithToken(
+      String apiKey,
+      String playerToken,
+      String baseUrl,
+      PopupSource source,
+      ActivePopup.DeepLinkHandler onDeepLink,
+      ActivePopup.CustomActionHandler onCustomAction,
+      List<String> blockedRoutes) {
+    Setup newSetup =
+        new Setup(apiKey, baseUrl, source, onDeepLink, onCustomAction, blockedRoutes);
+    PopupRequestContext context = contextFor(newSetup, playerToken);
+    if (context == null) {
+      InAppLog.log("player token unreadable: not fetching");
+      endSession(false);
+      setup = newSetup;
+      return;
+    }
+    init(context, source, onDeepLink, onCustomAction, blockedRoutes);
+  }
+
+  private PopupRequestContext contextFor(Setup setup, String playerToken) {
+    PlayerTokenClaims claims = PlayerTokenClaims.tryRead(playerToken);
+    if (claims == null && setup.source.needsPlayerToken()) {
+      return null;
+    }
+    return new PopupRequestContext(
+        setup.baseUrl,
+        claims != null ? claims.workspaceId : "mock",
+        claims != null ? claims.playerId : "mock",
+        setup.apiKey,
+        playerToken);
+  }
+
+  public void setPlayerToken(String playerToken) {
+    Setup s = setup;
+    if (s == null) {
+      InAppLog.log("setPlayerToken before init: ignored");
+      return;
+    }
+    Session existing = session;
+    PopupRequestContext context = contextFor(s, playerToken);
+    if (context == null) {
+      InAppLog.log("player token unreadable: not fetching");
+      if (existing != null) {
+        existing.paused = true;
+      }
+      return;
+    }
+    if (existing == null
+        || !existing.context.playerId.equals(context.playerId)
+        || !existing.context.workspaceId.equals(context.workspaceId)) {
+      init(context, s.source, s.onDeepLink, s.onCustomAction, s.blockedRoutes);
+      return;
+    }
+    existing.context = context;
+    existing.paused = false;
+    InAppLog.log("player token replaced");
+    flush(existing);
+    fetchMoment();
+  }
+
+  public void init(
+      PopupRequestContext context,
+      PopupSource source,
+      ActivePopup.DeepLinkHandler onDeepLink,
+      ActivePopup.CustomActionHandler onCustomAction,
+      List<String> blockedRoutes) {
+    Session previous = session;
+    boolean switching =
+        previous != null
+            && (!previous.context.playerId.equals(context.playerId)
+                || !previous.context.workspaceId.equals(context.workspaceId));
+    endSession(switching && previous != null && !previous.paused);
+    Session newSession =
+        new Session(
+            context,
+            source,
+            onDeepLink,
+            onCustomAction,
+            Collections.unmodifiableList(new ArrayList<>(blockedRoutes)));
+    session = newSession;
+    setup =
+        new Setup(
+            context.apiKey,
+            context.baseUrl,
+            source,
+            onDeepLink,
+            onCustomAction,
+            blockedRoutes);
+    String playerKey = context.workspaceId + "/" + context.playerId;
+    if (!playerKey.equals(lastPlayerKey)) {
+      shownThisVisit = false;
+    }
+    lastPlayerKey = playerKey;
+    workers.execute(
+        () -> {
+          shown.load();
+          main.post(
+              () -> {
+                if (session != newSession) {
+                  return;
+                }
+                InAppLog.log("init workspace " + context.workspaceId + " player " + context.playerId);
+                flush(newSession);
+                fetchMoment();
+              });
+        });
+  }
+
+  public void logout() {
+    InAppLog.log("logout");
+    endSession(session != null && !session.paused);
+    setup = null;
+  }
+
+  private void endSession(boolean flush) {
+    Session s = session;
+    session = null;
+    if (flushTimer != null) {
+      main.removeCallbacks(flushTimer);
+      flushTimer = null;
+    }
+    ActivePopup active = current;
+    if (active != null && !active.isTest) {
+      setCurrent(null);
+    }
+    if (flush && s != null) {
+      workers.execute(() -> flushQuiet(s));
+    }
+  }
+
+  private void fetchMoment() {
+    Session s = session;
+    if (s == null) {
+      return;
+    }
+    workers.execute(() -> maybeFetch(s));
+  }
+
+  private void maybeFetch(Session s) {
+    if (s.paused || s.fetching || !inForeground || !s.throttle.canFetch(Instant.now())) {
+      return;
+    }
+    s.fetching = true;
+    PopupRequestContext context = s.context;
+    boolean tokenChanged = false;
+    try {
+      PopupFetchResult result = s.source.fetch(context);
+      if (session != s) {
+        return;
+      }
+      s.throttle.recordResponse(Instant.now(), result.nextCheckAfterSec);
+      s.waiting = result.popups;
+      InAppLog.log(
+          "fetched "
+              + result.popups.size()
+              + " pop-up(s), next check in "
+              + s.throttle.getInterval().getSeconds()
+              + " s");
+      flush(s);
+      main.post(this::showMoment);
+    } catch (PopupHttpException e) {
+      InAppLog.log("fetch failed: " + e);
+      if (e.isAuthFailure()) {
+        tokenChanged = !pauseIfCurrent(s, context);
+      }
+    } catch (Exception e) {
+      InAppLog.log("fetch failed: " + e);
+    } finally {
+      s.fetching = false;
+    }
+    if (tokenChanged && session == s) {
+      fetchMoment();
+    }
+  }
+
+  private boolean pauseIfCurrent(Session s, PopupRequestContext context) {
+    if (s.context != context) {
+      return false;
+    }
+    InAppLog.log("player token refused: paused until setPlayerToken");
+    s.paused = true;
+    return true;
+  }
+
+  public void didChangeRoute(String newRoute) {
+    if (newRoute == null || newRoute.equals(route)) {
+      return;
+    }
+    route = newRoute;
+    visit++;
+    shownThisVisit = false;
+    InAppLog.log("route " + newRoute);
+    ActivePopup active = current;
+    Session s = session;
+    if (active != null
+        && !active.isTest
+        && s != null
+        && ShowRules.isRouteBlocked(newRoute, s.blockedRoutes)) {
+      InAppLog.log("hide " + active.popup.id + ": " + newRoute + " is blocked");
+      setCurrent(null);
+    }
+    showMoment();
+    fetchMoment();
+  }
+
+  private void showMoment() {
+    Session s = session;
+    if (s == null) {
+      return;
+    }
+    workers.execute(() -> maybeShow(s));
+  }
+
+  private void maybeShow(Session s) {
+    if (picking) {
+      pickAgain = true;
+      return;
+    }
+    if (shownThisVisit || current != null) {
+      return;
+    }
+    picking = true;
+    pickAgain = false;
+    int visitSnapshot = visit;
+    InAppPopup next = null;
+    try {
+      var shownIds = shown.load();
+      next =
+          ShowRules.pickPopupToShow(
+              s.waiting, shownIds, route, s.blockedRoutes, Instant.now());
+      if (next != null && next.content.image != null && !next.content.image.isGradient()) {
+        images.awaitLoad(next.content.image.url, IMAGE_WAIT_MS);
+      }
+    } catch (Exception e) {
+      InAppLog.log("pick failed: " + e);
+      next = null;
+    } finally {
+      picking = false;
+    }
+    if (session != s) {
+      if (pickAgain) {
+        showMoment();
+      }
+      return;
+    }
+    if (visitSnapshot != visit || pickAgain) {
+      maybeShow(s);
+      return;
+    }
+    if (next == null || shownThisVisit || current != null) {
+      return;
+    }
+    InAppPopup picked = next;
+    shownThisVisit = true;
+    List<InAppPopup> remaining = new ArrayList<>();
+    for (InAppPopup p : s.waiting) {
+      if (!p.id.equals(picked.id)) {
+        remaining.add(p);
+      }
+    }
+    s.waiting = Collections.unmodifiableList(remaining);
+    InAppLog.log("show " + picked.id + " (" + picked.content.layout.name() + ") on " + route);
+    ActivePopup active =
+        new ActivePopup(picked, s.context, s.onDeepLink, s.onCustomAction, false);
+    main.post(() -> setCurrent(active));
+  }
+
+  public void showTest(PopupContent content) {
+    testCount++;
+    InAppPopup popup =
+        new InAppPopup(
+            "test-" + testCount,
+            "test-" + testCount,
+            null,
+            Instant.now(),
+            null,
+            content);
+    ActivePopup.DeepLinkHandler deepLink = session != null ? session.onDeepLink : null;
+    ActivePopup.CustomActionHandler custom = session != null ? session.onCustomAction : null;
+    if (setup != null) {
+      deepLink = deepLink != null ? deepLink : setup.onDeepLink;
+      custom = custom != null ? custom : setup.onCustomAction;
+    }
+    setCurrent(new ActivePopup(popup, null, deepLink, custom, true));
+  }
+
+  public void didDraw(ActivePopup active) {
+    if (current != active) {
+      return;
+    }
+    if (active.isTest) {
+      InAppLog.log("test pop-up drawn (" + active.getContent().layout.name() + ")");
+      return;
+    }
+    workers.execute(
+        () -> {
+          try {
+            shown.markShown(active.popup.id);
+          } catch (Exception e) {
+            InAppLog.log("could not remember " + active.popup.id + ": " + e);
+          }
+        });
+    track(active, PopupEventType.impression, null);
+    Integer autoDismiss = active.getContent().autoDismissSec;
+    if (autoDismiss != null) {
+      main.postDelayed(() -> close(active, true), autoDismiss * 1000L);
+    }
+  }
+
+  public boolean close(ActivePopup active, boolean dismissed) {
+    if (current != active) {
+      return false;
+    }
+    setCurrent(null);
+    if (dismissed) {
+      track(active, PopupEventType.dismiss, null);
+    }
+    return true;
+  }
+
+  public void tapButton(ActivePopup active, int index) {
+    if (index < 0 || index >= active.getContent().buttons.size()) {
+      return;
+    }
+    if (!close(active, false)) {
+      return;
+    }
+    track(active, PopupEventType.click, index);
+    perform(active, active.getContent().buttons.get(index).action);
+  }
+
+  public void tapImage(ActivePopup active) {
+    PopupAction action = active.getContent().image != null ? active.getContent().image.tapAction : null;
+    if (action == null && active.getContent().layout != PopupLayout.imageOnly) {
+      return;
+    }
+    if (!close(active, false)) {
+      return;
+    }
+    track(active, PopupEventType.click, null);
+    if (action != null) {
+      perform(active, action);
+    }
+  }
+
+  private void perform(ActivePopup active, PopupAction action) {
+    switch (action.type) {
+      case dismiss -> {}
+      case deeplink -> {
+        if (action.value != null && active.onDeepLink != null) {
+          active.onDeepLink.onDeepLink(action.value);
+        }
+      }
+      case custom -> {
+        if (action.customData != null && active.onCustomAction != null) {
+          active.onCustomAction.onCustomAction(action.customData);
+        }
+      }
+      case url -> {
+        if (action.value == null) {
+          return;
+        }
+        try {
+          Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(action.value));
+          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+          appContext.startActivity(intent);
+        } catch (Exception e) {
+          InAppLog.log("could not open " + action.value + ": " + e);
+        }
+      }
+    }
+  }
+
+  private void track(ActivePopup active, PopupEventType type, Integer buttonIndex) {
+    if (active.isTest) {
+      String suffix = buttonIndex != null ? " button " + buttonIndex : "";
+      InAppLog.log("test " + type.name() + suffix);
+      return;
+    }
+    PopupRequestContext context = active.context;
+    PopupEvent event =
+        new PopupEvent(active.popup.trackingId, type, Instant.now(), buttonIndex);
+    workers.execute(
+        () -> {
+          if (events.enqueue(event, context.workspaceId, context.playerId)) {
+            scheduleFlush();
+          }
+        });
+  }
+
+  private void scheduleFlush() {
+    Session s = session;
+    if (s == null) {
+      return;
+    }
+    if (flushTimer != null) {
+      main.removeCallbacks(flushTimer);
+    }
+    flushTimer =
+        () -> {
+          if (session == s) {
+            flush(s);
+          }
+        };
+    main.postDelayed(flushTimer, FLUSH_DELAY_MS);
+  }
+
+  private void flush(Session s) {
+    if (s.paused || !inForeground) {
+      return;
+    }
+    workers.execute(
+        () -> {
+          try {
+            events.flush(s.source, s.context);
+          } catch (PopupHttpException e) {
+            if (e.isAuthFailure()) {
+              pauseIfCurrent(s, s.context);
+            }
+          } catch (Exception e) {
+            InAppLog.log("flush failed: " + e);
+          }
+        });
+  }
+
+  private void flushQuiet(Session s) {
+    try {
+      events.flush(s.source, s.context);
+    } catch (Exception e) {
+      InAppLog.log("flush failed: " + e);
+    }
+  }
+
+  public PopupSource defaultHttpSource() {
+    return new HttpPopupSource();
+  }
+}
