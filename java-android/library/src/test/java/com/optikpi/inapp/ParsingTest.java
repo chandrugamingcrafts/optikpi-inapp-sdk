@@ -189,4 +189,16 @@ public class ParsingTest {
     assertFalse(off.tapOutsideToClose);
     assertFalse(off.show);
   }
+
+  @Test
+  public void onlyAnExactVersionOneIsRendered() throws Exception {
+    for (String version : new String[] {"1.5", "4294967297", "2", "0", "\"1\"", "null"}) {
+      JSONObject json =
+          new JSONObject("{\"version\":" + version + ",\"layout\":\"modal\",\"title\":\"Hi\"}");
+      assertNull("version " + version, PopupContent.tryParse(json));
+    }
+    assertNotNull(
+        PopupContent.tryParse(
+            new JSONObject("{\"version\":1,\"layout\":\"modal\",\"title\":\"Hi\"}")));
+  }
 }

@@ -68,8 +68,9 @@ public final class PopupContent {
     }
     if (map.has("version")) {
       Object versionRaw = map.opt("version");
-      int version = versionRaw instanceof Number n ? n.intValue() : -1;
-      if (version != 1) {
+      // Compare the exact value: intValue() would turn 1.5 or 4294967297 into 1.
+      boolean isV1 = versionRaw instanceof Number n && n.doubleValue() == 1.0;
+      if (!isV1) {
         return null;
       }
     }

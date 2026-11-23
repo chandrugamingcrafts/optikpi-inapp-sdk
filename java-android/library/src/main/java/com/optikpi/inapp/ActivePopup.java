@@ -14,6 +14,9 @@ public final class ActivePopup {
   /** Set when the first frame is reported, so a second attached activity doesn't report it again. */
   boolean drawn;
 
+  /** The scheduled auto-dismiss, kept so it can be cancelled when this stops being current. */
+  Runnable autoDismissTask;
+
   ActivePopup(
       InAppPopup popup,
       PopupRequestContext context,

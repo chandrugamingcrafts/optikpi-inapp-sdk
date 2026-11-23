@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import com.optikpi.inapp.events.EventQueue;
 import com.optikpi.inapp.events.PopupEvent;
 import com.optikpi.inapp.events.PopupEventType;
@@ -157,6 +158,12 @@ public final class OptikpiInAppController {
   }
 
   private void setCurrent(ActivePopup value) {
+    ActivePopup previous = current;
+    if (previous != null && previous.autoDismissTask != null) {
+      // A closed pop-up must not stay reachable from the main handler for its whole delay.
+      main.removeCallbacks(previous.autoDismissTask);
+      previous.autoDismissTask = null;
+    }
     current = value;
     for (CurrentListener listener : listeners) {
       listener.onChanged(value);
@@ -323,7 +330,7 @@ public final class OptikpiInAppController {
   }
 
   private void maybeFetch(Session s) {
-    if (s.paused || s.fetching || !inForeground || !s.throttle.canFetch(Instant.now())) {
+    if (s.paused || s.fetching || !inForeground || !s.throttle.canFetch(SystemClock.elapsedRealtime())) {
       return;
     }
     s.fetching = true;
@@ -334,7 +341,7 @@ public final class OptikpiInAppController {
       if (session != s) {
         return;
       }
-      s.throttle.recordResponse(Instant.now(), result.nextCheckAfterSec);
+      s.throttle.recordResponse(SystemClock.elapsedRealtime(), result.nextCheckAfterSec);
       s.waiting = result.popups;
       InAppLog.log(
           "fetched "
@@ -453,14 +460,9 @@ public final class OptikpiInAppController {
       InAppLog.log("drop " + picked.id + ": the session or screen changed before it showed");
       return;
     }
-    shownThisVisit = true;
-    List<InAppPopup> remaining = new ArrayList<>();
-    for (InAppPopup p : s.waiting) {
-      if (!p.id.equals(picked.id)) {
-        remaining.add(p);
-      }
-    }
-    s.waiting = Collections.unmodifiableList(remaining);
+    // Not consumed yet: the pop-up stays waiting, and the visit unspent, until it is really drawn
+    // (see didDraw). One that is dropped before that, expired during the image wait or hidden by
+    // a screen change, can then be tried again instead of being lost.
     InAppLog.log("show " + picked.id + " (" + picked.content.layout.name() + ") on " + route);
     setCurrent(new ActivePopup(picked, s.context, s.onDeepLink, s.onCustomAction, false));
   }
@@ -491,6 +493,7 @@ public final class OptikpiInAppController {
     if (!active.isTest && active.popup.isExpiredAt(Instant.now())) {
       InAppLog.log("drop " + active.popup.id + ": it expired before it was drawn");
       setCurrent(null);
+      showMoment(); // the next waiting pop-up, if any, still has this visit
       return;
     }
     active.drawn = true;
@@ -498,6 +501,7 @@ public final class OptikpiInAppController {
       InAppLog.log("test pop-up drawn (" + active.getContent().layout.name() + ")");
       return;
     }
+    consume(active);
     workers.execute(
         () -> {
           try {
@@ -509,8 +513,26 @@ public final class OptikpiInAppController {
     track(active, PopupEventType.impression, null);
     Integer autoDismiss = active.getContent().autoDismissSec;
     if (autoDismiss != null) {
-      main.postDelayed(() -> close(active, true), autoDismiss * 1000L);
+      Runnable task = () -> close(active, true);
+      active.autoDismissTask = task;
+      main.postDelayed(task, autoDismiss * 1000L);
     }
+  }
+
+  /** The pop-up was drawn: it is spent for this visit and leaves the waiting list. */
+  private void consume(ActivePopup active) {
+    shownThisVisit = true;
+    Session s = session;
+    if (s == null) {
+      return;
+    }
+    List<InAppPopup> remaining = new ArrayList<>();
+    for (InAppPopup p : s.waiting) {
+      if (!p.id.equals(active.popup.id)) {
+        remaining.add(p);
+      }
+    }
+    s.waiting = Collections.unmodifiableList(remaining);
   }
 
   public boolean close(ActivePopup active, boolean dismissed) {
