@@ -33,7 +33,10 @@ public final class OptikpiInApp {
   /**
    * Registers the activity callbacks that draw pop-ups and follow screens. Call it once from {@code
    * Application.onCreate}, so every activity is seen from its first start. {@code init} calls it
-   * too if you haven't, but it can only adopt the activity you pass it then.
+   * too if you haven't, but it can only adopt the activity you pass it then. An activity created
+   * before the hooks exist is never seen being created, so a screen the app reported with {@link
+   * #didChangeRoute} cannot be carried through that activity's recreation (rotation, process
+   * death): install early if you use custom routes or {@code blockedRoutes}.
    */
   public static synchronized void install(Application application) {
     ensureLifecycle(application, OptikpiInAppController.getInstance(application));

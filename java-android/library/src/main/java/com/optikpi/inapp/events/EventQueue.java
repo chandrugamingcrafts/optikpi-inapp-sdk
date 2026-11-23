@@ -35,6 +35,13 @@ public final class EventQueue {
 
   private final SharedPreferences prefs;
   private final int batchSize;
+  /**
+   * Held for a whole flush, network included, so flushes run one at a time. It is not the monitor
+   * {@link #enqueue} takes: a pop-up's impression must reach storage at once, not wait behind a
+   * request that may take a minute to time out.
+   */
+  private final Object flushLock = new Object();
+
   private boolean flushing;
   private PopupSource pendingSource;
   private PopupRequestContext pendingContext;
@@ -128,7 +135,14 @@ public final class EventQueue {
    * batch and the flush stops, leaving the rest queued, as soon as it says no (the app went to the
    * background, the session ended or was paused).
    */
-  public synchronized void flush(
+  public void flush(PopupSource source, PopupRequestContext context, BooleanSupplier eligible)
+      throws Exception {
+    synchronized (flushLock) {
+      flushLocked(source, context, eligible);
+    }
+  }
+
+  private void flushLocked(
       PopupSource source, PopupRequestContext context, BooleanSupplier eligible)
       throws Exception {
     if (flushing) {
@@ -168,8 +182,12 @@ public final class EventQueue {
   private void flushOnce(
       PopupSource source, PopupRequestContext context, BooleanSupplier eligible)
       throws Exception {
+    List<String> stored;
+    synchronized (this) {
+      stored = readList(QUEUE_KEY);
+    }
     List<QueuedItem> items = new ArrayList<>();
-    for (String raw : readList(QUEUE_KEY)) {
+    for (String raw : stored) {
       QueuedItem item = QueuedItem.tryParse(raw);
       if (item != null
           && item.workspaceId.equals(context.workspaceId)
@@ -205,9 +223,12 @@ public final class EventQueue {
       for (QueuedItem q : batch) {
         sent.add(q.raw);
       }
-      List<String> remaining = readList(QUEUE_KEY);
-      remaining.removeAll(sent);
-      prefs.edit().putString(QUEUE_KEY, encode(remaining)).apply();
+      synchronized (this) {
+        // Re-read: events were queued while the request was out.
+        List<String> remaining = readList(QUEUE_KEY);
+        remaining.removeAll(sent);
+        prefs.edit().putString(QUEUE_KEY, encode(remaining)).apply();
+      }
     }
   }
 

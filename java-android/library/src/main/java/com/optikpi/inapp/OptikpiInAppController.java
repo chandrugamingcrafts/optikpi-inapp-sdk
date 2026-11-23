@@ -43,6 +43,13 @@ public final class OptikpiInAppController {
   private final Context appContext;
   private final Handler main = new Handler(Looper.getMainLooper());
   private final ExecutorService workers = Executors.newSingleThreadExecutor();
+
+  /**
+   * Writes that record what the user saw (the shown id, the impression). They get their own thread
+   * so they never queue behind a fetch, a flush or an image load on {@link #workers}: a process
+   * killed while one of those is in flight must not lose a pop-up that was on screen.
+   */
+  private final ExecutorService storage = Executors.newSingleThreadExecutor();
   private final EventQueue events;
   private final ShownStore shown;
   private final PopupImageLoader images;
@@ -648,7 +655,7 @@ public final class OptikpiInAppController {
       return;
     }
     consume(active);
-    workers.execute(
+    storage.execute(
         () -> {
           try {
             shown.markShown(active.popup.id, active.popup.expiresAt);
@@ -767,7 +774,7 @@ public final class OptikpiInAppController {
     PopupRequestContext context = active.context;
     PopupEvent event =
         new PopupEvent(active.popup.trackingId, type, Instant.now(), buttonIndex);
-    workers.execute(
+    storage.execute(
         () -> {
           if (events.enqueue(event, context.workspaceId, context.playerId)) {
             main.post(this::scheduleFlush);

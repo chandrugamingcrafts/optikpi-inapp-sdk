@@ -58,7 +58,9 @@ public class App extends Application {
 ```
 
 `install` is optional if you pass an `Activity` to `init` (step 4): `init` registers the hooks itself and
-attaches to that already-running `Activity`. Call `OptikpiInApp.didChangeRoute` when you navigate if the
+attaches to that already-running `Activity`. **Call it anyway if you use custom routes or `blockedRoutes`**:
+the hooks save your reported route when an `Activity` is recreated (rotation, process death) and can only
+restore it for an `Activity` they saw being created, so registering late loses it. Call `OptikpiInApp.didChangeRoute` when you navigate if the
 default route (the activity's class name) is not your path (recommended for all apps).
 
 **4. Call `init` on login**, and at app start when you restore a saved session. `playerToken` comes from

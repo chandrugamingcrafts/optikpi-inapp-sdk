@@ -39,7 +39,7 @@ public class StoresTest {
   }
 
   @Test
-  public void shownStoreDropsAnIdOnceItsPopupHasExpired() {
+  public void shownStoreDropsAnIdWellAfterItsPopupHasExpired() {
     long[] now = {1_000_000L};
     ShownStore store = new ShownStore(context, () -> now[0]);
     store.markShown("short", Instant.ofEpochMilli(now[0] + 1_000));
@@ -47,7 +47,11 @@ public class StoresTest {
     store.markShown("forever", null);
     assertEquals(3, store.load().size());
 
+    // Past its expiry, a record is still kept: the device clock can be wrong for a while.
     now[0] += 2_000;
+    assertTrue(store.load().contains("short"));
+
+    now[0] += ShownStore.EXPIRY_GRACE_MS;
     Set<String> ids = store.load();
     assertFalse(ids.contains("short"));
     assertTrue(ids.contains("long"));
@@ -55,6 +59,7 @@ public class StoresTest {
 
     // What was dropped stays dropped after a restart, and the rest keeps its order.
     now[0] += 200_000;
+    now[0] += ShownStore.EXPIRY_GRACE_MS;
     List<String> reloaded = new ArrayList<>(new ShownStore(context, () -> now[0]).load());
     assertEquals(List.of("forever"), reloaded);
   }

@@ -130,4 +130,53 @@ public class EventQueueTest {
     assertEquals(6, source.sent.size());
     assertEquals(0, queue.length());
   }
+
+  @Test
+  public void anEventIsQueuedWhileAFlushIsWaitingOnTheNetwork() throws Exception {
+    EventQueue queue = new EventQueue(context, 50);
+    queue.enqueue(impression("first"), "ws", "p1");
+    java.util.concurrent.CountDownLatch inRequest = new java.util.concurrent.CountDownLatch(1);
+    java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+    PopupSource slow =
+        new PopupSource() {
+          @Override
+          public PopupFetchResult fetch(PopupRequestContext context) {
+            throw new UnsupportedOperationException();
+          }
+
+          @Override
+          public void sendEvents(PopupRequestContext context, List<PopupEvent> events)
+              throws Exception {
+            inRequest.countDown();
+            release.await(10, java.util.concurrent.TimeUnit.SECONDS);
+          }
+        };
+    Thread flusher =
+        new Thread(
+            () -> {
+              try {
+                queue.flush(slow, player("ws", "p1"));
+              } catch (Exception ignored) {
+              }
+            });
+    flusher.start();
+    assertTrue(inRequest.await(10, java.util.concurrent.TimeUnit.SECONDS));
+
+    // The request is out: an impression recorded now must not wait for it.
+    java.util.concurrent.atomic.AtomicBoolean queued =
+        new java.util.concurrent.atomic.AtomicBoolean();
+    Thread recorder =
+        new Thread(() -> queued.set(queue.enqueue(impression("second"), "ws", "p1")));
+    recorder.start();
+    recorder.join(5000);
+    boolean finishedWhileInFlight = !recorder.isAlive();
+    release.countDown();
+    flusher.join(10000);
+    recorder.join(5000);
+
+    assertTrue("enqueue waited behind the in-flight request", finishedWhileInFlight);
+    assertTrue(queued.get());
+    // "first" went with the request; "second" arrived meanwhile and must still be queued.
+    assertEquals(1, queue.length());
+  }
 }

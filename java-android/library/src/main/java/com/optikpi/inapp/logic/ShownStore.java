@@ -20,13 +20,18 @@ import org.json.JSONObject;
  * the server keep returning a pop-up that already has an impression, so an id with no {@code
  * expiresAt} is kept for good: dropping it (as a count cap would) lets the pop-up be picked again.
  * An id with an {@code expiresAt} goes once that time passes, because {@code ShowRules} refuses an
- * expired pop-up anyway; that is the bound on the store's size.
+ * expired pop-up anyway; that is the bound on the store's size. The id outlives the expiry by
+ * {@link #EXPIRY_GRACE_MS}: expiry is judged by the device clock, which can be set wrong for a
+ * while, and the record is deleted for good.
  *
  * <p>Stored as an ordered JSON array. An entry is a plain string (no expiry; also the format older
  * versions wrote) or {@code {"id": ..., "exp": epochMillis}}.
  */
 public final class ShownStore {
   public static final String KEY = "optikpi_inapp.shown";
+
+  /** How long past its expiry an id is kept, to ride out a device clock that is set far ahead. */
+  public static final long EXPIRY_GRACE_MS = 30L * 24 * 60 * 60 * 1000;
 
   private final SharedPreferences prefs;
   private final LongSupplier clock;
@@ -75,10 +80,10 @@ public final class ShownStore {
     return entries;
   }
 
-  /** Drops what has expired; true when something went. */
+  /** Drops what expired more than the grace period ago; true when something went. */
   private boolean prune(Map<String, Long> map) {
     long now = clock.getAsLong();
-    return map.values().removeIf(exp -> exp != NEVER && exp <= now);
+    return map.values().removeIf(exp -> exp != NEVER && exp + EXPIRY_GRACE_MS <= now);
   }
 
   /** Ids still worth remembering, oldest first. */

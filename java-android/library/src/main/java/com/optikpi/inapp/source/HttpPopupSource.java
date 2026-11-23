@@ -13,7 +13,9 @@ import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
+import org.json.JSONTokener;
 
 public final class HttpPopupSource extends PopupSource {
   private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
@@ -48,6 +50,22 @@ public final class HttpPopupSource extends PopupSource {
         .header("accept", "application/json");
   }
 
+  /**
+   * The body's top-level value as it is: {@code null} (or anything but an object) is an empty
+   * result, not a failure, as {@code contract/fixtures/fetch-response-cases.json} requires. Only
+   * unparseable text throws.
+   */
+  static PopupFetchResult parseBody(String body) throws JSONException {
+    JSONTokener tokener = new JSONTokener(body);
+    Object value = tokener.nextValue();
+    // The tokener is lenient: it reads bare words such as an HTML error page as a string, and
+    // stops at the first value. Only a real JSON document is a response.
+    if (tokener.nextClean() != 0 || (value instanceof String && !body.trim().startsWith("\""))) {
+      throw new JSONException("not a JSON document");
+    }
+    return PopupFetchResult.fromJson(value);
+  }
+
   @Override
   public PopupFetchResult fetch(PopupRequestContext context) throws Exception {
     String path = "/v1/inapp/popups";
@@ -58,7 +76,7 @@ public final class HttpPopupSource extends PopupSource {
         throw new PopupHttpException(response.code(), path);
       }
       String body = response.body() != null ? response.body().string() : "{}";
-      return PopupFetchResult.fromJson(new JSONObject(body));
+      return parseBody(body);
     }
   }
 
