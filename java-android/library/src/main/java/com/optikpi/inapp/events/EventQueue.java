@@ -8,57 +8,117 @@ import com.optikpi.inapp.source.PopupRequestContext;
 import com.optikpi.inapp.source.PopupSource;
 import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.Iterator;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
+import org.json.JSONArray;
+import org.json.JSONException;
 import org.json.JSONObject;
 
+/**
+ * Events wait here, in SharedPreferences, until the server takes them. Each {@code (trackingId,
+ * type)} gets in once, so it is sent once, however often the app reports it.
+ *
+ * <p>Both lists are stored as ordered JSON arrays (a {@code StringSet} has no order), so when a cap
+ * is passed the oldest entries go first, as {@code API.md} requires.
+ */
 public final class EventQueue {
   public static final String QUEUE_KEY = "optikpi_inapp.events";
   public static final String TRACKED_KEY = "optikpi_inapp.tracked";
+
+  /** Oldest events drop off first when the device has been offline for a very long time. */
   public static final int MAX_QUEUED = 500;
+
   public static final int MAX_TRACKED = 2000;
 
   private final SharedPreferences prefs;
   private final int batchSize;
-  private volatile boolean flushing;
+  private boolean flushing;
   private PopupSource pendingSource;
   private PopupRequestContext pendingContext;
 
   public EventQueue(Context context, int batchSize) {
-    prefs = context.getApplicationContext().getSharedPreferences("optikpi_inapp", Context.MODE_PRIVATE);
+    prefs =
+        context.getApplicationContext().getSharedPreferences("optikpi_inapp", Context.MODE_PRIVATE);
     this.batchSize = batchSize;
   }
 
+  private List<String> readList(String key) {
+    List<String> out = new ArrayList<>();
+    try {
+      String raw = prefs.getString(key, null);
+      if (raw == null) {
+        return out;
+      }
+      JSONArray array = new JSONArray(raw);
+      for (int i = 0; i < array.length(); i++) {
+        String item = array.optString(i, null);
+        if (item != null) {
+          out.add(item);
+        }
+      }
+    } catch (ClassCastException | JSONException e) {
+      // An unreadable value (another format) starts the list over.
+      out.clear();
+    }
+    return out;
+  }
+
+  private static String encode(List<String> list) {
+    return new JSONArray(list).toString();
+  }
+
+  /** False when this {@code (trackingId, type)} was queued before. */
   public synchronized boolean enqueue(PopupEvent event, String workspaceId, String playerId) {
-    Set<String> tracked = new HashSet<>(prefs.getStringSet(TRACKED_KEY, new HashSet<>()));
+    Set<String> tracked = new LinkedHashSet<>(readList(TRACKED_KEY));
     if (tracked.contains(event.getDedupeKey())) {
       return false;
     }
-    List<String> queue = new ArrayList<>(prefs.getStringSet(QUEUE_KEY, new HashSet<>()));
     JSONObject item = new JSONObject();
     try {
       item.put("workspaceId", workspaceId);
       item.put("playerId", playerId);
       item.put("event", event.toJson());
-    } catch (Exception e) {
+    } catch (JSONException e) {
       return false;
     }
+    List<String> queue = readList(QUEUE_KEY);
     queue.add(item.toString());
-    tracked.add(event.getDedupeKey());
     if (queue.size() > MAX_QUEUED) {
       queue = new ArrayList<>(queue.subList(queue.size() - MAX_QUEUED, queue.size()));
     }
-  List<String> trackedList = new ArrayList<>(tracked);
-    if (trackedList.size() > MAX_TRACKED) {
-      trackedList = new ArrayList<>(trackedList.subList(trackedList.size() - MAX_TRACKED, trackedList.size()));
-      tracked = new HashSet<>(trackedList);
+    tracked.add(event.getDedupeKey());
+    if (tracked.size() > MAX_TRACKED) {
+      int drop = tracked.size() - MAX_TRACKED;
+      Iterator<String> oldest = tracked.iterator();
+      for (int i = 0; i < drop && oldest.hasNext(); i++) {
+        oldest.next();
+        oldest.remove();
+      }
     }
-    prefs.edit().putStringSet(QUEUE_KEY, new HashSet<>(queue)).putStringSet(TRACKED_KEY, tracked).apply();
+    prefs
+        .edit()
+        .putString(QUEUE_KEY, encode(queue))
+        .putString(TRACKED_KEY, encode(new ArrayList<>(tracked)))
+        .apply();
     InAppLog.log("queued " + event.type.name() + " " + event.trackingId);
     return true;
   }
 
-  public synchronized void flush(PopupSource source, PopupRequestContext context) throws Exception {
+  public synchronized int length() {
+    return readList(QUEUE_KEY).size();
+  }
+
+  /**
+   * Sends what is queued for {@code context}'s player, in batches: a player token speaks for one
+   * player, so another player's events wait for that player's next session. A network error or a
+   * refused batch stops the flush and the rest waits for the next call. A batch refused for its
+   * token or key throws the {@link PopupHttpException}, from the last pass only, so the caller can
+   * pause.
+   */
+  public synchronized void flush(PopupSource source, PopupRequestContext context)
+      throws Exception {
     if (flushing) {
       pendingSource = source;
       pendingContext = context;
@@ -90,9 +150,8 @@ public final class EventQueue {
   }
 
   private void flushOnce(PopupSource source, PopupRequestContext context) throws Exception {
-    Set<String> rawItems = prefs.getStringSet(QUEUE_KEY, new HashSet<>());
     List<QueuedItem> items = new ArrayList<>();
-    for (String raw : rawItems) {
+    for (String raw : readList(QUEUE_KEY)) {
       QueuedItem item = QueuedItem.tryParse(raw);
       if (item != null
           && item.workspaceId.equals(context.workspaceId)
@@ -116,6 +175,7 @@ public final class EventQueue {
         }
         return;
       } catch (Exception e) {
+        // Offline or timed out: nothing else will get through now.
         InAppLog.log("event send failed, will retry: " + e);
         return;
       }
@@ -123,9 +183,9 @@ public final class EventQueue {
       for (QueuedItem q : batch) {
         sent.add(q.raw);
       }
-      Set<String> remaining = new HashSet<>(prefs.getStringSet(QUEUE_KEY, new HashSet<>()));
+      List<String> remaining = readList(QUEUE_KEY);
       remaining.removeAll(sent);
-      prefs.edit().putStringSet(QUEUE_KEY, remaining).apply();
+      prefs.edit().putString(QUEUE_KEY, encode(remaining)).apply();
     }
   }
 
@@ -146,13 +206,13 @@ public final class EventQueue {
       try {
         JSONObject json = new JSONObject(raw);
         PopupEvent event = PopupEvent.tryParse(json.opt("event"));
-        String workspaceId = json.optString("workspaceId", null);
-        String playerId = json.optString("playerId", null);
-        if (event == null || workspaceId == null || playerId == null) {
+        Object workspaceId = json.opt("workspaceId");
+        Object playerId = json.opt("playerId");
+        if (event == null || !(workspaceId instanceof String) || !(playerId instanceof String)) {
           return null;
         }
-        return new QueuedItem(raw, workspaceId, playerId, event);
-      } catch (Exception e) {
+        return new QueuedItem(raw, (String) workspaceId, (String) playerId, event);
+      } catch (JSONException e) {
         return null;
       }
     }

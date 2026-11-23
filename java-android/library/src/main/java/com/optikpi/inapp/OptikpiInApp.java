@@ -1,5 +1,6 @@
 package com.optikpi.inapp;
 
+import android.app.Activity;
 import android.app.Application;
 import android.content.Context;
 import com.optikpi.inapp.integration.OptikpiLifecycleCallbacks;
@@ -12,7 +13,7 @@ import java.util.Map;
 
 /** OptiKPI in-app pop-ups for Java Android. See README.md for the five-step integration. */
 public final class OptikpiInApp {
-  private static boolean lifecycleRegistered;
+  private static OptikpiLifecycleCallbacks lifecycle;
 
   private OptikpiInApp() {}
 
@@ -28,7 +29,24 @@ public final class OptikpiInApp {
     return OptikpiInAppController.getInstance(context);
   }
 
-  public static void init(
+  /**
+   * Registers the activity callbacks that draw pop-ups and follow screens. Call it once from {@code
+   * Application.onCreate}, so every activity is seen from its first start. {@code init} calls it
+   * too if you haven't, but it can only adopt the activity you pass it then.
+   */
+  public static synchronized void install(Application application) {
+    ensureLifecycle(application, OptikpiInAppController.getInstance(application));
+  }
+
+  /**
+   * Call on login, and at app start when a stored session is restored, with the {@code
+   * playerToken} your server signed for this player.
+   *
+   * <p>Pass the current {@code Activity} as {@code context} (or call {@link #install} in {@code
+   * Application.onCreate}): the overlay is attached to activities the callbacks have seen start, and
+   * a running activity is only seen if it is passed here.
+   */
+  public static synchronized void init(
       Context context,
       String apiKey,
       String playerToken,
@@ -40,7 +58,13 @@ public final class OptikpiInApp {
     Context app = context.getApplicationContext();
     OptikpiInAppController ctrl = OptikpiInAppController.getInstance(app);
     PopupSource resolved = source != null ? source : ctrl.defaultHttpSource();
-    ensureLifecycle(app, ctrl);
+    if (app instanceof Application) {
+      OptikpiLifecycleCallbacks callbacks = ensureLifecycle((Application) app, ctrl);
+      Activity running = activityOf(context);
+      if (running != null) {
+        callbacks.adoptRunningActivity(running);
+      }
+    }
     ctrl.initWithToken(
         apiKey,
         playerToken,
@@ -79,11 +103,24 @@ public final class OptikpiInApp {
     return new MockPopupSource(context, playerData);
   }
 
-  private static void ensureLifecycle(Context app, OptikpiInAppController controller) {
-    if (lifecycleRegistered || !(app instanceof Application application)) {
-      return;
+  private static OptikpiLifecycleCallbacks ensureLifecycle(
+      Application application, OptikpiInAppController controller) {
+    if (lifecycle == null) {
+      lifecycle = new OptikpiLifecycleCallbacks(controller);
+      application.registerActivityLifecycleCallbacks(lifecycle);
     }
-    application.registerActivityLifecycleCallbacks(new OptikpiLifecycleCallbacks(controller));
-    lifecycleRegistered = true;
+    return lifecycle;
+  }
+
+  /** The activity behind {@code context}, looking through wrappers such as a themed context. */
+  private static Activity activityOf(Context context) {
+    Context current = context;
+    while (current instanceof android.content.ContextWrapper) {
+      if (current instanceof Activity) {
+        return (Activity) current;
+      }
+      current = ((android.content.ContextWrapper) current).getBaseContext();
+    }
+    return null;
   }
 }

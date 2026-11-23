@@ -13,7 +13,11 @@ public final class PlayerTokenClaims {
     this.workspaceId = workspaceId;
   }
 
+  /** `sub` and `wid` of a JWT's payload, unverified. Null when the token is null or unreadable. */
   public static PlayerTokenClaims tryRead(String token) {
+    if (token == null) {
+      return null;
+    }
     String[] parts = token.split("\\.");
     if (parts.length != 3) {
       return null;

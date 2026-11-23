@@ -15,28 +15,51 @@ blocking pop-ups.
 ## Integration in five steps
 
 **1. Add the dependency**, pinned to a release tag. Check out the repo (or a submodule) and include the
-Gradle build at `java-android/`:
+`library` module as a project in your build:
 
 ```kotlin
 // settings.gradle.kts
-includeBuild("../path/to/optikpi-inapp-sdk/java-android")
+include(":optikpi-inapp")
+project(":optikpi-inapp").projectDir =
+    file("../path/to/optikpi-inapp-sdk/java-android/library")
 ```
 
 ```kotlin
 // app/build.gradle.kts
+android {
+  compileOptions {
+    // The library uses java.time. Required when your minSdk is below 26.
+    isCoreLibraryDesugaringEnabled = true
+  }
+}
+
 dependencies {
-  implementation(project(":library"))
+  implementation(project(":optikpi-inapp"))
+  coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
 }
 ```
 
 Pin the same commit as tag `java-android-v0.1.0` (or your chosen release) when you vendor or submodule
-the repo.
+the repo. The `INTERNET` permission is declared by the library and merges into your manifest.
 
-**2. Run a Gradle sync** (`./gradlew :library:assemble` from `java-android/` once, to verify the module).
+**2. Run a Gradle sync.**
 
-**3. Pop-ups attach automatically** on each `Activity` via lifecycle callbacks (overlay on
-`android.R.id.content`). Call `OptikpiInApp.didChangeRoute` when you navigate if the default activity
-class name is not your path (recommended for all apps).
+**3. Register the hooks once**, in your `Application`, so pop-ups attach to every `Activity` (overlay on
+`android.R.id.content`):
+
+```java
+public class App extends Application {
+  @Override
+  public void onCreate() {
+    super.onCreate();
+    OptikpiInApp.install(this);
+  }
+}
+```
+
+`install` is optional if you pass an `Activity` to `init` (step 4): `init` registers the hooks itself and
+attaches to that already-running `Activity`. Call `OptikpiInApp.didChangeRoute` when you navigate if the
+default route (the activity's class name) is not your path (recommended for all apps).
 
 **4. Call `init` on login**, and at app start when you restore a saved session. `playerToken` comes from
 your server: see
@@ -75,7 +98,8 @@ OptikpiInApp.didChangeRoute(this, "/dashboard/home");
 OptikpiInApp.logout(this);   // stops fetching, drops this player's waiting pop-ups
 ```
 
-Pass an `Application` context on the first `init` so foreground hooks register.
+Pass your current `Activity` (or the `Application`, with `install` in `Application.onCreate`) to `init`.
+An `Activity` that is already on screen when `init` runs, as after a login, is picked up straight away.
 
 ## Options
 
@@ -106,7 +130,7 @@ Other members:
 From `java-android/`:
 
 ```bash
-./gradlew :library:test    # unit tests, including ../contract/fixtures
+./gradlew :library:testDebugUnitTest    # unit tests, including ../contract/fixtures
 ```
 
 The parsing tests read the shared fixtures in `../contract/fixtures`, so they run from a checkout of the

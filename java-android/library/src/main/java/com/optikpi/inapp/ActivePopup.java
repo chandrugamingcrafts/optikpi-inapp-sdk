@@ -11,6 +11,9 @@ public final class ActivePopup {
   public final CustomActionHandler onCustomAction;
   public final boolean isTest;
 
+  /** Set when the first frame is reported, so a second attached activity doesn't report it again. */
+  boolean drawn;
+
   ActivePopup(
       InAppPopup popup,
       PopupRequestContext context,

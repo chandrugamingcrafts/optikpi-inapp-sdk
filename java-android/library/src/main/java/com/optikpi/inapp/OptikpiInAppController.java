@@ -44,17 +44,18 @@ public final class OptikpiInAppController {
   private final PopupImageLoader images;
   private final List<CurrentListener> listeners = new CopyOnWriteArrayList<>();
 
-  private Setup setup;
-  private Session session;
+  // The main thread changes these and the worker thread reads them, hence volatile.
+  private volatile Setup setup;
+  private volatile Session session;
   private String lastPlayerKey;
-  private ActivePopup current;
-  private boolean inForeground = true;
+  private volatile ActivePopup current;
+  private volatile boolean inForeground = true;
   private Runnable flushTimer;
   private int testCount;
 
-  private String route;
-  private int visit;
-  private boolean shownThisVisit;
+  private volatile String route;
+  private volatile int visit;
+  private volatile boolean shownThisVisit;
   private boolean picking;
   private boolean pickAgain;
 
@@ -87,15 +88,15 @@ public final class OptikpiInAppController {
   }
 
   private static final class Session {
-    PopupRequestContext context;
+    volatile PopupRequestContext context;
     final PopupSource source;
     final ActivePopup.DeepLinkHandler onDeepLink;
     final ActivePopup.CustomActionHandler onCustomAction;
     final List<String> blockedRoutes;
     final FetchThrottle throttle = new FetchThrottle();
-    List<InAppPopup> waiting = Collections.emptyList();
-    boolean fetching;
-    boolean paused;
+    volatile List<InAppPopup> waiting = Collections.emptyList();
+    volatile boolean fetching;
+    volatile boolean paused;
 
     Session(
         PopupRequestContext context,
@@ -423,6 +424,22 @@ public final class OptikpiInAppController {
       return;
     }
     InAppPopup picked = next;
+    int pickedVisit = visitSnapshot;
+    // The pick ran on the worker thread. A logout or a screen change can land on the main thread
+    // between that check and this post, so decide again where the state changes, in one go.
+    main.post(() -> publish(s, picked, pickedVisit));
+  }
+
+  /** Main thread. Shows [picked] only if the world is still the one it was picked for. */
+  private void publish(Session s, InAppPopup picked, int pickedVisit) {
+    if (session != s
+        || visit != pickedVisit
+        || shownThisVisit
+        || current != null
+        || ShowRules.isRouteBlocked(route, s.blockedRoutes)) {
+      InAppLog.log("drop " + picked.id + ": the session or screen changed before it showed");
+      return;
+    }
     shownThisVisit = true;
     List<InAppPopup> remaining = new ArrayList<>();
     for (InAppPopup p : s.waiting) {
@@ -432,9 +449,7 @@ public final class OptikpiInAppController {
     }
     s.waiting = Collections.unmodifiableList(remaining);
     InAppLog.log("show " + picked.id + " (" + picked.content.layout.name() + ") on " + route);
-    ActivePopup active =
-        new ActivePopup(picked, s.context, s.onDeepLink, s.onCustomAction, false);
-    main.post(() -> setCurrent(active));
+    setCurrent(new ActivePopup(picked, s.context, s.onDeepLink, s.onCustomAction, false));
   }
 
   public void showTest(PopupContent content) {
@@ -457,9 +472,10 @@ public final class OptikpiInAppController {
   }
 
   public void didDraw(ActivePopup active) {
-    if (current != active) {
+    if (current != active || active.drawn) {
       return;
     }
+    active.drawn = true;
     if (active.isTest) {
       InAppLog.log("test pop-up drawn (" + active.getContent().layout.name() + ")");
       return;

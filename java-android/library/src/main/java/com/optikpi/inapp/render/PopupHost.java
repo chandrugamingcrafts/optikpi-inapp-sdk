@@ -17,6 +17,10 @@ public final class PopupHost {
 
   private PopupHost() {}
 
+  public static boolean isAttached(Activity activity) {
+    return BINDINGS.containsKey(activity);
+  }
+
   public static void attach(Activity activity, OptikpiInAppController controller) {
     detach(activity);
     View content = activity.findViewById(android.R.id.content);

@@ -2,6 +2,8 @@ package com.optikpi.inapp.render;
 
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
+import android.os.Handler;
+import android.os.Looper;
 import com.optikpi.inapp.InAppLog;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,13 +14,20 @@ import java.util.concurrent.TimeUnit;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 
+/** Loads a pop-up's image over HTTP(S) into a small bounded in-memory cache. */
 public final class PopupImageLoader {
   private static final long TIMEOUT_SEC = 8;
 
+  public interface Listener {
+    /** Called on the main thread. {@code bitmap} is null when the image can't be loaded. */
+    void onLoaded(Bitmap bitmap);
+  }
+
   private final OkHttpClient client;
   private final ExecutorService executor = Executors.newCachedThreadPool();
+  private final Handler main = new Handler(Looper.getMainLooper());
   private final Map<String, Future<Bitmap>> inFlight = new ConcurrentHashMap<>();
-  private final Map<String, Bitmap> cache = new ConcurrentHashMap<>();
+  private final BoundedBitmapCache cache = new BoundedBitmapCache();
 
   public PopupImageLoader() {
     client = new OkHttpClient.Builder().callTimeout(TIMEOUT_SEC, TimeUnit.SECONDS).build();
@@ -28,6 +37,7 @@ public final class PopupImageLoader {
     return cache.get(url);
   }
 
+  /** Null for a {@code gradient:} url, which is drawn and never loaded. */
   public Future<Bitmap> load(String url) {
     if (url.startsWith("gradient:")) {
       return null;
@@ -61,6 +71,25 @@ public final class PopupImageLoader {
                     inFlight.remove(url);
                   }
                 }));
+  }
+
+  /** Loads [url] and reports on the main thread, for a view drawn before its image arrived. */
+  public void loadAsync(String url, Listener listener) {
+    Future<Bitmap> future = load(url);
+    if (future == null) {
+      return;
+    }
+    executor.execute(
+        () -> {
+          Bitmap bitmap = null;
+          try {
+            bitmap = future.get(TIMEOUT_SEC, TimeUnit.SECONDS);
+          } catch (Exception e) {
+            InAppLog.log("image still loading after " + TIMEOUT_SEC + " s: " + url);
+          }
+          Bitmap result = bitmap;
+          main.post(() -> listener.onLoaded(result));
+        });
   }
 
   public Bitmap awaitLoad(String url, long timeoutMs) {
