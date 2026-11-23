@@ -7,6 +7,8 @@ import static org.junit.Assert.assertTrue;
 
 import android.content.Context;
 import android.view.View;
+import android.view.WindowInsets;
+import android.widget.FrameLayout;
 import android.view.ViewGroup;
 import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.render.PopupOverlayView;
@@ -15,6 +17,7 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
+import org.robolectric.annotation.Config;
 
 @RunWith(RobolectricTestRunner.class)
 public class PopupOverlayViewTest {
@@ -106,5 +109,49 @@ public class PopupOverlayViewTest {
     // And they have no full-screen scrim in front of the page.
     assertEquals(1, banner.getChildCount());
     assertEquals(1, toast.getChildCount());
+  }
+
+  // WindowInsets.Builder and the Type constants only exist from API 30.
+  private static WindowInsets bars(int left, int top, int right, int bottom) {
+    return new WindowInsets.Builder()
+        .setInsets(WindowInsets.Type.systemBars(), android.graphics.Insets.of(left, top, right, bottom))
+        .build();
+  }
+
+  @Test
+  @Config(sdk = 34)
+  public void aBannerAndAToastStayClearOfTheSystemBars() throws Exception {
+    for (String layout : new String[] {"banner", "toast"}) {
+      PopupOverlayView view = view(layout, "md");
+      FrameLayout.LayoutParams before = (FrameLayout.LayoutParams) cardParams(view);
+      view.dispatchApplyWindowInsets(bars(10, 48, 20, 32));
+      FrameLayout.LayoutParams after = (FrameLayout.LayoutParams) cardParams(view);
+      assertEquals(layout + " left", before.leftMargin + 10, after.leftMargin);
+      assertEquals(layout + " top", before.topMargin + 48, after.topMargin);
+      assertEquals(layout + " right", before.rightMargin + 20, after.rightMargin);
+      assertEquals(layout + " bottom", before.bottomMargin + 32, after.bottomMargin);
+    }
+  }
+
+  @Test
+  @Config(sdk = 34)
+  public void aFullscreenPopupKeepsItsContentClearOfTheSystemBars() throws Exception {
+    PopupOverlayView view = view("fullscreen", "md");
+    view.dispatchApplyWindowInsets(bars(0, 48, 0, 32));
+    View card = view.getChildAt(view.getChildCount() - 1);
+    assertEquals(48, card.getPaddingTop());
+    assertEquals(32, card.getPaddingBottom());
+  }
+
+  @Test
+  @Config(sdk = 34)
+  public void aBottomSheetKeepsItsContentAboveTheNavigationBar() throws Exception {
+    PopupOverlayView view = view("bottomSheet", "md");
+    int before = cardParams(view).height;
+    view.dispatchApplyWindowInsets(bars(0, 0, 0, 32));
+    View sheet = view.getChildAt(view.getChildCount() - 1);
+    assertEquals(32, sheet.getPaddingBottom());
+    // The usable height shrank by the inset, and the sheet grew back by it to run under the bar.
+    assertTrue(sheet.getLayoutParams().height >= before - 32);
   }
 }

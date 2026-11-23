@@ -10,6 +10,8 @@ import android.widget.FrameLayout;
 import androidx.activity.OnBackPressedCallback;
 import com.optikpi.inapp.ActivePopup;
 import com.optikpi.inapp.OptikpiInAppController;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.WeakHashMap;
 
 public final class PopupHost {
@@ -46,7 +48,7 @@ public final class PopupHost {
     if (activity instanceof ComponentActivity componentActivity) {
       componentActivity.getOnBackPressedDispatcher().addCallback(componentActivity, back);
     }
-    HostBinding binding = new HostBinding(controller, overlay, back);
+    HostBinding binding = new HostBinding(controller, root, overlay, back);
     BINDINGS.put(activity, binding);
     controller.addCurrentListener(binding.listener);
     binding.listener.onChanged(controller.getCurrent());
@@ -58,6 +60,7 @@ public final class PopupHost {
       return;
     }
     binding.controller.removeCurrentListener(binding.listener);
+    binding.restorePage();
     ViewGroup parent = (ViewGroup) binding.overlay.getParent();
     if (parent != null) {
       parent.removeView(binding.overlay);
@@ -67,12 +70,39 @@ public final class PopupHost {
 
   private static final class HostBinding {
     final OptikpiInAppController controller;
+    final ViewGroup root;
     final FrameLayout overlay;
     final OnBackPressedCallback back;
     final OptikpiInAppController.CurrentListener listener;
 
-    HostBinding(OptikpiInAppController controller, FrameLayout overlay, OnBackPressedCallback back) {
+    /** The page's views and what their accessibility importance was before a blocking pop-up. */
+    private final Map<View, Integer> hidden = new HashMap<>();
+
+    /** A blocking pop-up covers the page, so a screen reader must not reach what is behind it. */
+    void hidePage() {
+      for (int i = 0; i < root.getChildCount(); i++) {
+        View child = root.getChildAt(i);
+        if (child != overlay && !hidden.containsKey(child)) {
+          hidden.put(child, child.getImportantForAccessibility());
+          child.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS);
+        }
+      }
+    }
+
+    void restorePage() {
+      for (Map.Entry<View, Integer> entry : hidden.entrySet()) {
+        entry.getKey().setImportantForAccessibility(entry.getValue());
+      }
+      hidden.clear();
+    }
+
+    HostBinding(
+        OptikpiInAppController controller,
+        ViewGroup root,
+        FrameLayout overlay,
+        OnBackPressedCallback back) {
       this.controller = controller;
+      this.root = root;
       this.overlay = overlay;
       this.back = back;
       this.listener =
@@ -81,8 +111,15 @@ public final class PopupHost {
             handler.post(
                 () -> {
                   overlay.removeAllViews();
-                  back.setEnabled(
-                      active != null && PopupBlocksPage.blocksPage(active.getContent()));
+                  boolean blocks =
+                      active != null && PopupBlocksPage.blocksPage(active.getContent());
+                  back.setEnabled(blocks);
+                  // Banners and toasts leave the page usable, so it stays exposed for them.
+                  if (blocks) {
+                    hidePage();
+                  } else {
+                    restorePage();
+                  }
                   if (active == null) {
                     return;
                   }

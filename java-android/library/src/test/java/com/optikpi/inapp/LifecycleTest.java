@@ -7,7 +7,9 @@ import static org.junit.Assert.assertTrue;
 import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Activity;
+import androidx.activity.ComponentActivity;
 import android.os.Looper;
+import org.robolectric.android.controller.ActivityController;
 import android.view.View;
 import android.view.ViewGroup;
 import com.optikpi.inapp.integration.OptikpiLifecycleCallbacks;
@@ -52,7 +54,8 @@ public class LifecycleTest {
   @Test
   public void anActivityThatStartedBeforeInitGetsTheOverlay() throws Exception {
     // init runs after login, when the activity is long since started: the callbacks never saw it.
-    Activity activity = Robolectric.buildActivity(Activity.class).create().start().resume().get();
+    Activity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
     OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
     OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
 
@@ -83,5 +86,47 @@ public class LifecycleTest {
     assertTrue(PopupHost.isAttached(activity));
     callbacks.onActivityStopped(activity);
     assertFalse(PopupHost.isAttached(activity));
+  }
+
+  @Test
+  public void anActivityThatIsAlreadyStoppedIsNotAdopted() {
+    // A login that finishes after the user left the app: stopped, but not finishing or destroyed.
+    ActivityController<ComponentActivity> controllerOf =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume();
+    ComponentActivity activity = controllerOf.get();
+    controllerOf.pause().stop();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+
+    callbacks.adoptRunningActivity(activity);
+
+    assertFalse(PopupHost.isAttached(activity));
+  }
+
+  @Test
+  public void aBlockingPopupHidesThePageFromScreenReadersAndABannerDoesNot() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
+    View page = new View(activity);
+    activity.setContentView(page);
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    new OptikpiLifecycleCallbacks(controller).adoptRunningActivity(activity);
+    int original = page.getImportantForAccessibility();
+
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals(
+        View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS, page.getImportantForAccessibility());
+
+    controller.showTest(
+        PopupContent.tryParse(
+            new JSONObject()
+                .put("version", 1)
+                .put("layout", "banner")
+                .put("size", "md")
+                .put("title", "Hi")));
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals(original, page.getImportantForAccessibility());
+    PopupHost.detach(activity);
   }
 }

@@ -3,6 +3,9 @@ package com.optikpi.inapp.integration;
 import android.app.Activity;
 import android.app.Application;
 import android.os.Bundle;
+import android.view.View;
+import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleOwner;
 import com.optikpi.inapp.OptikpiInAppController;
 import com.optikpi.inapp.render.PopupHost;
 import java.util.Collections;
@@ -33,7 +36,11 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
    * foreground state until its next stop and start. Safe to call again for the same activity.
    */
   public synchronized void adoptRunningActivity(Activity activity) {
-    if (activity.isFinishing() || activity.isDestroyed()) {
+    if (!isOnScreen(activity)) {
+      // The app is in the background as far as we can tell: don't fetch or report until it returns.
+      if (started.isEmpty()) {
+        controller.setForeground(false);
+      }
       return;
     }
     boolean wasForeground = !started.isEmpty();
@@ -45,6 +52,27 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
       PopupHost.attach(activity, controller);
       controller.didChangeRoute(routeOf(activity));
     }
+  }
+
+  /**
+   * Whether the activity is started and visible. A stopped activity (a login that finishes after the
+   * user left the app) is neither finishing nor destroyed, but showing a pop-up on it would count an
+   * impression nobody saw, and mark the app as foreground. The next {@code onActivityStarted}
+   * picks it up when the user returns.
+   */
+  private static boolean isOnScreen(Activity activity) {
+    if (activity.isFinishing() || activity.isDestroyed()) {
+      return false;
+    }
+    if (activity instanceof LifecycleOwner) {
+      return ((LifecycleOwner) activity)
+          .getLifecycle()
+          .getCurrentState()
+          .isAtLeast(Lifecycle.State.STARTED);
+    }
+    // No lifecycle to ask: a stopped activity's window is hidden.
+    View decor = activity.getWindow().getDecorView();
+    return decor.isAttachedToWindow() && decor.getVisibility() == View.VISIBLE;
   }
 
   private static String routeOf(Activity activity) {

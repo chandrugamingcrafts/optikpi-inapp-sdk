@@ -597,13 +597,20 @@ public final class OptikpiInAppController {
     if (s.paused || !inForeground) {
       return;
     }
+    // The request and the pause decision must use the same token: setPlayerToken can swap
+    // s.context while the POST is in flight, and a refusal of the old token says nothing
+    // about the new one.
+    PopupRequestContext sentWith = s.context;
     workers.execute(
         () -> {
           try {
-            events.flush(s.source, s.context);
+            events.flush(s.source, sentWith);
           } catch (PopupHttpException e) {
             if (e.isAuthFailure()) {
-              pauseIfCurrent(s, s.context);
+              if (!pauseIfCurrent(s, sentWith) && session == s) {
+                // The token was replaced mid-request: the queued events still need sending.
+                flush(s);
+              }
             }
           } catch (Exception e) {
             InAppLog.log("flush failed: " + e);

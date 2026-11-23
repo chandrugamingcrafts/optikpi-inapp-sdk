@@ -15,6 +15,9 @@ import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
+import androidx.core.graphics.Insets;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import com.optikpi.inapp.model.PopupButton;
 import com.optikpi.inapp.model.PopupClose;
 import com.optikpi.inapp.model.PopupContent;
@@ -59,6 +62,13 @@ public final class PopupOverlayView extends FrameLayout {
   private final PopupImageLoader images;
   private final boolean blocking;
   private final float density;
+  /** The window's size, and the part of it the system bars and a display cutout leave free. */
+  private int rawW;
+  private int rawH;
+  private int insetL;
+  private int insetT;
+  private int insetR;
+  private int insetB;
   private int screenW;
   private int screenH;
 
@@ -71,8 +81,30 @@ public final class PopupOverlayView extends FrameLayout {
     this.blocking = PopupBlocksPage.blocksPage(content);
     DisplayMetrics metrics = getResources().getDisplayMetrics();
     this.density = metrics.density;
-    this.screenW = metrics.widthPixels;
-    this.screenH = metrics.heightPixels;
+    this.rawW = metrics.widthPixels;
+    this.rawH = metrics.heightPixels;
+    updateUsableSize();
+    // An edge-to-edge window (always, on Android 15 with target SDK 35) runs under the status,
+    // navigation and cutout areas: keep the card and its controls out of them.
+    ViewCompat.setOnApplyWindowInsetsListener(
+        this,
+        (v, windowInsets) -> {
+          Insets bars =
+              windowInsets.getInsets(
+                  WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+          if (bars.left != insetL
+              || bars.top != insetT
+              || bars.right != insetR
+              || bars.bottom != insetB) {
+            insetL = bars.left;
+            insetT = bars.top;
+            insetR = bars.right;
+            insetB = bars.bottom;
+            updateUsableSize();
+            build();
+          }
+          return windowInsets;
+        });
     // A banner or toast must not swallow touches outside its card.
     setClickable(blocking);
     setFocusable(blocking);
@@ -83,11 +115,32 @@ public final class PopupOverlayView extends FrameLayout {
   protected void onSizeChanged(int w, int h, int oldw, int oldh) {
     super.onSizeChanged(w, h, oldw, oldh);
     // Rotation and split-screen change the window: lay the card out again for the real size.
-    if (w > 0 && h > 0 && (w != screenW || h != screenH)) {
-      screenW = w;
-      screenH = h;
+    if (w > 0 && h > 0 && (w != rawW || h != rawH)) {
+      rawW = w;
+      rawH = h;
+      updateUsableSize();
       post(this::build);
     }
+  }
+
+  @Override
+  protected void onAttachedToWindow() {
+    super.onAttachedToWindow();
+    ViewCompat.requestApplyInsets(this);
+  }
+
+  private void updateUsableSize() {
+    screenW = Math.max(1, rawW - insetL - insetR);
+    screenH = Math.max(1, rawH - insetT - insetB);
+  }
+
+  /** Adds a card clear of the system bars and the display cutout. */
+  private void addCard(View card, LayoutParams params) {
+    params.leftMargin += insetL;
+    params.topMargin += insetT;
+    params.rightMargin += insetR;
+    params.bottomMargin += insetB;
+    addView(card, params);
   }
 
   // ---- sizing ---------------------------------------------------------------------------------
@@ -232,7 +285,7 @@ public final class PopupOverlayView extends FrameLayout {
     addScrim();
     addCloseButton(card, content.theme.isDarkBackground() || content.image != null, 0);
     params.gravity = Gravity.CENTER;
-    addView(card, params);
+    addCard(card, params);
   }
 
   private void buildFullscreen() {
@@ -240,6 +293,8 @@ public final class PopupOverlayView extends FrameLayout {
     FrameLayout card = new FrameLayout(getContext());
     card.setBackgroundColor(content.theme.background);
     card.setClickable(true);
+    // The background runs under the bars; the content and the close button stay clear of them.
+    card.setPadding(insetL, insetT, insetR, insetB);
     LinearLayout column = new LinearLayout(getContext());
     column.setOrientation(LinearLayout.VERTICAL);
     if (hasImage) {
@@ -273,13 +328,15 @@ public final class PopupOverlayView extends FrameLayout {
       default:
         fraction = 0.50f;
     }
-    int height = Math.round(screenH * fraction);
+    int height = Math.round(screenH * fraction) + insetB;
     float radius = (float) content.theme.radius;
     FrameLayout sheet = new FrameLayout(getContext());
     sheet.setBackground(cardBackground(radius, 0));
     sheet.setClipToOutline(true);
     sheet.setElevation(dp(16));
     sheet.setClickable(true);
+    // The sheet runs under the navigation bar; its content stays above it.
+    sheet.setPadding(0, 0, 0, insetB);
 
     LinearLayout column = new LinearLayout(getContext());
     column.setOrientation(LinearLayout.VERTICAL);
@@ -313,6 +370,8 @@ public final class PopupOverlayView extends FrameLayout {
     addScrim();
     LayoutParams params = new LayoutParams(LayoutParams.MATCH_PARENT, height);
     params.gravity = Gravity.BOTTOM;
+    params.leftMargin = insetL;
+    params.rightMargin = insetR;
     addView(sheet, params);
   }
 
@@ -362,7 +421,7 @@ public final class PopupOverlayView extends FrameLayout {
     params.gravity =
         (content.position == PopupPosition.bottom ? Gravity.BOTTOM : Gravity.TOP)
             | Gravity.CENTER_HORIZONTAL;
-    addView(card, params);
+    addCard(card, params);
   }
 
   private void buildToast() {
@@ -405,7 +464,7 @@ public final class PopupOverlayView extends FrameLayout {
     LayoutParams params = new LayoutParams(width, LayoutParams.WRAP_CONTENT);
     params.gravity = (bottom ? Gravity.BOTTOM : Gravity.TOP) | Gravity.END;
     params.setMargins(margin, margin, margin, margin);
-    addView(card, params);
+    addCard(card, params);
   }
 
   private void buildImageOnly() {
@@ -420,7 +479,7 @@ public final class PopupOverlayView extends FrameLayout {
     addScrim();
     LayoutParams params = new LayoutParams(size[0], size[1]);
     params.gravity = Gravity.CENTER;
-    addView(card, params);
+    addCard(card, params);
   }
 
   // ---- pieces ---------------------------------------------------------------------------------
