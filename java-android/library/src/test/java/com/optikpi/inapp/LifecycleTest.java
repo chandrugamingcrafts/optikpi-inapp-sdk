@@ -19,6 +19,7 @@ import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.render.PopupHost;
 import com.optikpi.inapp.render.PopupOverlayView;
 import org.json.JSONObject;
+import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
@@ -27,6 +28,14 @@ import org.robolectric.RuntimeEnvironment;
 
 @RunWith(RobolectricTestRunner.class)
 public class LifecycleTest {
+  /** The controller is a process-wide singleton: start each test with no route reported. */
+  @Before
+  public void forgetTheReportedRoute() throws Exception {
+    java.lang.reflect.Field route = OptikpiInAppController.class.getDeclaredField("route");
+    route.setAccessible(true);
+    route.set(OptikpiInAppController.getInstance(RuntimeEnvironment.getApplication()), null);
+  }
+
   private static PopupContent modal() throws Exception {
     return PopupContent.tryParse(
         new JSONObject()
@@ -201,5 +210,17 @@ public class LifecycleTest {
     shadowOf(Looper.getMainLooper()).idle();
 
     assertEquals(original, pageRoot(activity).getImportantForAccessibility());
+  }
+
+  @Test
+  public void aRouteReportedBeforeTheFirstAdoptionIsKept() {
+    ComponentActivity activity = activityAt("app://class-default");
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    // The app reports its own path before init, so no lifecycle callbacks exist yet.
+    controller.didChangeRoute("/dashboard/blocked");
+
+    new OptikpiLifecycleCallbacks(controller).adoptRunningActivity(activity);
+
+    assertEquals("/dashboard/blocked", controller.getRoute());
   }
 }

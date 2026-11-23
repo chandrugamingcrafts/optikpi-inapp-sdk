@@ -61,8 +61,9 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     }
     if (!PopupHost.isAttached(activity)) {
       PopupHost.attach(activity, controller);
+      String route = currentRoute(activity);
       top = new WeakReference<>(activity);
-      controller.didChangeRoute(currentRoute(activity));
+      controller.didChangeRoute(route);
     }
   }
 
@@ -87,6 +88,15 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
 
   private String currentRoute(Activity activity) {
     String reported = routes.get(activity);
+    if (reported == null && top.get() == null) {
+      // No activity has been seen yet, so a route the controller already holds was reported by the
+      // app itself (before install, or before this first adoption): keep it, don't replace it
+      // with the activity's class name.
+      reported = controller.getRoute();
+      if (reported != null) {
+        routes.put(activity, reported);
+      }
+    }
     return reported != null ? reported : routeOf(activity);
   }
 
@@ -127,8 +137,9 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
       controller.setForeground(true);
     }
     PopupHost.attach(activity, controller);
+    String route = currentRoute(activity);
     top = new WeakReference<>(activity);
-    controller.didChangeRoute(currentRoute(activity));
+    controller.didChangeRoute(route);
   }
 
   @Override

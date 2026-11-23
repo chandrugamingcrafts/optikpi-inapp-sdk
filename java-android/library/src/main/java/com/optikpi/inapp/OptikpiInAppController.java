@@ -181,6 +181,7 @@ public final class OptikpiInAppController {
       if (active != null && !active.isTest && active.popup.isExpiredAt(Instant.now())) {
         InAppLog.log("drop " + active.popup.id + ": it expired while the app was in the background");
         setCurrent(null);
+        showMoment(); // an older waiting pop-up may still have this visit
       }
       Session s = session;
       if (s != null) {
@@ -637,12 +638,17 @@ public final class OptikpiInAppController {
     if (s.paused || !inForeground) {
       return;
     }
-    // The request and the pause decision must use the same token: setPlayerToken can swap
-    // s.context while the POST is in flight, and a refusal of the old token says nothing
-    // about the new one.
-    PopupRequestContext sentWith = s.context;
     workers.execute(
         () -> {
+          // This task may have waited behind a fetch or an image load: the app can have gone to
+          // the background, the session ended, or an earlier request been refused since.
+          if (session != s || s.paused || !inForeground) {
+            return;
+          }
+          // The request and the pause decision must use the same token: setPlayerToken can swap
+          // s.context while the POST is in flight, and a refusal of the old token says nothing
+          // about the new one.
+          PopupRequestContext sentWith = s.context;
           try {
             events.flush(s.source, sentWith);
           } catch (PopupHttpException e) {
