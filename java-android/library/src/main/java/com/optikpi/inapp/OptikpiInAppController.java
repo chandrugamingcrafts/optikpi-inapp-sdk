@@ -27,7 +27,9 @@ import com.optikpi.inapp.source.PopupSource;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -94,13 +96,14 @@ public final class OptikpiInAppController {
   private static final class Session {
     private PopupRequestContext context;
     private boolean paused;
+    private List<InAppPopup> waiting = Collections.emptyList();
+    private final Set<String> drawnIds = new HashSet<>();
     final PopupSource source;
     final ActivePopup.DeepLinkHandler onDeepLink;
     final ActivePopup.CustomActionHandler onCustomAction;
     final List<String> blockedRoutes;
     final FetchThrottle throttle = new FetchThrottle();
-    volatile List<InAppPopup> waiting = Collections.emptyList();
-    volatile boolean fetching;
+    boolean fetching;
 
     Session(
         PopupRequestContext context,
@@ -148,6 +151,41 @@ public final class OptikpiInAppController {
       }
       paused = true;
       return true;
+    }
+
+    synchronized List<InAppPopup> getWaiting() {
+      return waiting;
+    }
+
+    /**
+     * Replaces the waiting list with a fresh fetch response, filtering out any pop-up already
+     * drawn in this session so an in-flight fetch cannot resurrect it, while atomic with {@link
+     * #consumeWaiting} so a concurrent draw cannot overwrite the new response with the old list.
+     */
+    synchronized void setWaiting(List<InAppPopup> popups) {
+      if (drawnIds.isEmpty()) {
+        waiting = Collections.unmodifiableList(new ArrayList<>(popups));
+        return;
+      }
+      List<InAppPopup> filtered = new ArrayList<>(popups.size());
+      for (InAppPopup p : popups) {
+        if (!drawnIds.contains(p.id)) {
+          filtered.add(p);
+        }
+      }
+      waiting = Collections.unmodifiableList(filtered);
+    }
+
+    /** Removes a drawn pop-up from the current waiting list atomically with fetch updates. */
+    synchronized void consumeWaiting(String popupId) {
+      drawnIds.add(popupId);
+      List<InAppPopup> remaining = new ArrayList<>(waiting.size());
+      for (InAppPopup p : waiting) {
+        if (!p.id.equals(popupId)) {
+          remaining.add(p);
+        }
+      }
+      waiting = Collections.unmodifiableList(remaining);
     }
   }
 
@@ -439,7 +477,7 @@ public final class OptikpiInAppController {
         return;
       }
       s.throttle.recordResponse(SystemClock.elapsedRealtime(), result.nextCheckAfterSec);
-      s.waiting = result.popups;
+      s.setWaiting(result.popups);
       InAppLog.log(
           "fetched "
               + result.popups.size()
@@ -520,7 +558,7 @@ public final class OptikpiInAppController {
       var shownIds = shown.load();
       next =
           ShowRules.pickPopupToShow(
-              s.waiting, shownIds, route, s.blockedRoutes, Instant.now());
+              s.getWaiting(), shownIds, route, s.blockedRoutes, Instant.now());
       if (next != null && next.content.image != null && !next.content.image.isGradient()) {
         images.awaitLoad(next.content.image.url, IMAGE_WAIT_MS);
       }
@@ -634,13 +672,7 @@ public final class OptikpiInAppController {
     if (s == null) {
       return;
     }
-    List<InAppPopup> remaining = new ArrayList<>();
-    for (InAppPopup p : s.waiting) {
-      if (!p.id.equals(active.popup.id)) {
-        remaining.add(p);
-      }
-    }
-    s.waiting = Collections.unmodifiableList(remaining);
+    s.consumeWaiting(active.popup.id);
   }
 
   public boolean close(ActivePopup active, boolean dismissed) {

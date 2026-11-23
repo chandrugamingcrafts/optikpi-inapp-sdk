@@ -19,6 +19,7 @@ import com.optikpi.inapp.source.PopupRequestContext;
 import com.optikpi.inapp.source.PopupSource;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
@@ -28,6 +29,7 @@ import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.json.JSONObject;
 import org.junit.After;
 import org.junit.Test;
@@ -35,6 +37,7 @@ import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.RuntimeEnvironment;
+import org.robolectric.shadows.ShadowSystemClock;
 
 @RunWith(RobolectricTestRunner.class)
 public class ControllerConcurrencyTest {
@@ -295,6 +298,79 @@ public class ControllerConcurrencyTest {
           "events flushed with fresh token in round " + round,
           flushedWithTokens.contains(freshToken));
       assertEquals(0, queue.length());
+    }
+  }
+
+  @Test
+  public void drawConsumptionRacingFetchPreservesNewlyFetchedPopups() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+
+    for (int round = 0; round < 20; round++) {
+      String token1 = jwt("ws", "player-3-" + round, "t1");
+      String token2 = jwt("ws", "player-3-" + round, "t2");
+      InAppPopup firstPopup = popup("first-" + round);
+      InAppPopup newlyDelivered = popup("newly-delivered-" + round);
+      AtomicInteger calls = new AtomicInteger();
+      CountDownLatch secondFetchEntered = new CountDownLatch(1);
+      CyclicBarrier raceBarrier = new CyclicBarrier(2);
+
+      PopupSource source =
+          new PopupSource() {
+            @Override
+            public PopupFetchResult fetch(PopupRequestContext context) {
+              if (calls.incrementAndGet() == 1) {
+                return new PopupFetchResult(List.of(firstPopup), 30);
+              }
+              secondFetchEntered.countDown();
+              try {
+                raceBarrier.await(5, TimeUnit.SECONDS);
+              } catch (Exception ignored) {
+              }
+              // 24-hour throttle: if consume() overwrites this list, no third fetch can rescue it.
+              return new PopupFetchResult(List.of(newlyDelivered, firstPopup), 86_400);
+            }
+
+            @Override
+            public void sendEvents(PopupRequestContext context, List<PopupEvent> events) {}
+          };
+
+      OptikpiInApp.didChangeRoute(activity, "/home-" + round);
+      OptikpiInApp.init(
+          activity,
+          "api-key",
+          token1,
+          "https://inapp.test",
+          null,
+          null,
+          Collections.emptyList(),
+          source);
+      drainAll(controller);
+
+      ActivePopup activeFirst = controller.getCurrent();
+      assertNotNull(activeFirst);
+      assertEquals(firstPopup.id, activeFirst.popup.id);
+
+      // Allow a second fetch while firstPopup is still awaiting its first draw.
+      ShadowSystemClock.advanceBy(Duration.ofSeconds(31));
+      OptikpiInApp.setPlayerToken(activity, token2);
+      awaitWithMainIdle(secondFetchEntered);
+
+      // Race second fetch's waiting-list installation against firstPopup's didDraw consumption.
+      raceBarrier.await(5, TimeUnit.SECONDS);
+      controller.didDraw(activeFirst);
+
+      drainAll(controller);
+      controller.close(activeFirst, true);
+      OptikpiInApp.didChangeRoute(activity, "/lobby-" + round);
+      drainAll(controller);
+
+      assertEquals("no third fetch allowed under 24h throttle", 2, calls.get());
+      assertNotNull("newly delivered popup preserved in round " + round, controller.getCurrent());
+      assertEquals(newlyDelivered.id, controller.getCurrent().popup.id);
+      controller.close(controller.getCurrent(), false);
+      drainAll(controller);
     }
   }
 }
