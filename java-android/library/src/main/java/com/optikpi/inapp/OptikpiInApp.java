@@ -46,6 +46,9 @@ public final class OptikpiInApp {
    * Call on login, and at app start when a stored session is restored, with the {@code
    * playerToken} your server signed for this player.
    *
+   * <p>{@code onDeepLink} and {@code onCustomAction} are kept until {@link #logout}: do not let
+   * them capture an {@code Activity} (see {@link #setHandlers}).
+   *
    * <p>Pass the current {@code Activity} as {@code context} (or call {@link #install} in {@code
    * Application.onCreate}): the overlay is attached to activities the callbacks have seen start, and
    * a running activity is only seen if it is passed here.
@@ -88,6 +91,20 @@ public final class OptikpiInApp {
 
   public static void init(Context context, String apiKey, String playerToken, String baseUrl) {
     init(context, apiKey, playerToken, baseUrl, null, null, Collections.emptyList(), null);
+  }
+
+  /**
+   * Replaces the deep-link and custom-action handlers, which {@code init} sets, without restarting
+   * the session. The SDK holds them for the life of the process (until {@link #logout}), so a
+   * handler that captures an {@code Activity} leaks it across rotation and calls into the
+   * destroyed instance. Pass handlers that go through your application (a navigator, an event
+   * bus), or bind them from an Activity and call this with {@code null} in {@code onDestroy}.
+   */
+  public static void setHandlers(
+      Context context,
+      ActivePopup.DeepLinkHandler onDeepLink,
+      ActivePopup.CustomActionHandler onCustomAction) {
+    OptikpiInAppController.getInstance(context).setHandlers(onDeepLink, onCustomAction);
   }
 
   public static void setPlayerToken(Context context, String playerToken) {

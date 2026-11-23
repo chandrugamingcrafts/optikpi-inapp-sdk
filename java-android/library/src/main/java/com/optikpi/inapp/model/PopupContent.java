@@ -7,6 +7,8 @@ import static com.optikpi.inapp.model.PopupEnums.PopupLayout;
 import static com.optikpi.inapp.model.PopupEnums.PopupPosition;
 import static com.optikpi.inapp.model.PopupEnums.PopupSize;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -68,9 +70,7 @@ public final class PopupContent {
     }
     if (map.has("version")) {
       Object versionRaw = map.opt("version");
-      // Compare the exact value: intValue() would turn 1.5 or 4294967297 into 1.
-      boolean isV1 = versionRaw instanceof Number n && n.doubleValue() == 1.0;
-      if (!isV1) {
+      if (!isExactlyOne(versionRaw)) {
         return null;
       }
     }
@@ -140,6 +140,29 @@ public final class PopupContent {
         autoDismissSec,
         mergeTags,
         PopupDelivery.tryParse(map.opt("delivery")));
+  }
+
+  /**
+   * True only for a number that is exactly 1, compared in its own type: {@code intValue()} would
+   * turn 1.5 or 4294967297 into 1, and narrowing a {@link BigDecimal} to a double would turn
+   * 1.0000000000000001 into 1.0. (A parser that has already rounded the literal to a double
+   * cannot be told apart, as in the JS and Dart SDKs.)
+   */
+  static boolean isExactlyOne(Object value) {
+    if (value instanceof BigDecimal d) {
+      return d.compareTo(BigDecimal.ONE) == 0;
+    }
+    if (value instanceof BigInteger i) {
+      return i.equals(BigInteger.ONE);
+    }
+    if (value instanceof Double || value instanceof Float) {
+      return ((Number) value).doubleValue() == 1.0;
+    }
+    if (value instanceof Long || value instanceof Integer || value instanceof Short
+        || value instanceof Byte) {
+      return ((Number) value).longValue() == 1L;
+    }
+    return false;
   }
 
   /**

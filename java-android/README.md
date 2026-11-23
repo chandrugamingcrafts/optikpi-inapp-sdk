@@ -112,6 +112,12 @@ An `Activity` that is already on screen when `init` runs, as after a login, is p
 | `blockedRoutes` | `[]` | Screens that never show a pop-up. A path blocks itself and everything under it. |
 | `source` | the pull API | `OptikpiInApp.mockSource(context)` serves bundled layout templates; needs no real token. |
 
+The handlers are held until `logout`, so do not let them capture an `Activity` (a lambda calling an instance
+method of your login screen would leak it across rotation and call into the destroyed instance). Route them
+through your application (a navigator, an event bus), or bind them from an `Activity` with
+`OptikpiInApp.setHandlers(context, onDeepLink, onCustomAction)` and clear them with
+`setHandlers(context, null, null)` in `onDestroy`.
+
 `baseUrl` is required: your environment's API gateway, `https://{dev\|qa\|app}.optikpi.com/apigw`.
 
 Other members:

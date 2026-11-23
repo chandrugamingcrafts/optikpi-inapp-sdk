@@ -119,9 +119,12 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
           .getCurrentState()
           .isAtLeast(Lifecycle.State.STARTED);
     }
-    // No lifecycle to ask: a stopped activity's window is hidden.
+    // No lifecycle to ask: a stopped activity's window is hidden, but its decor keeps its own
+    // visibility flag, so the window's visibility is the signal that says it is on screen.
     View decor = activity.getWindow().getDecorView();
-    return decor.isAttachedToWindow() && decor.getVisibility() == View.VISIBLE;
+    return decor.isAttachedToWindow()
+        && decor.getVisibility() == View.VISIBLE
+        && decor.getWindowVisibility() == View.VISIBLE;
   }
 
   private static String routeOf(Activity activity) {

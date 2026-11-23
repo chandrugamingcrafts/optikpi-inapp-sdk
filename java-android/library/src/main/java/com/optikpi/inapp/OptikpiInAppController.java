@@ -50,6 +50,12 @@ public final class OptikpiInAppController {
    * killed while one of those is in flight must not lose a pop-up that was on screen.
    */
   private final ExecutorService storage = Executors.newSingleThreadExecutor();
+
+  /**
+   * Sends the event backlog. A returning player can have up to ten 50-event POSTs waiting, and a
+   * campaign fetch must not sit behind them on {@link #workers}.
+   */
+  private final ExecutorService flusher = Executors.newSingleThreadExecutor();
   private final EventQueue events;
   private final ShownStore shown;
   private final PopupImageLoader images;
@@ -58,6 +64,9 @@ public final class OptikpiInAppController {
   // The main thread changes these and the worker thread reads them, hence volatile.
   private volatile Setup setup;
   private volatile Session session;
+  // Read when an action is performed, so a handler can be rebound while a pop-up is on screen.
+  private volatile ActivePopup.DeepLinkHandler deepLinkHandler;
+  private volatile ActivePopup.CustomActionHandler customActionHandler;
   // Compared field by field: joined into one string, "a/b" + "c" and "a" + "b/c" would collide.
   private String lastWorkspaceId;
   private String lastPlayerId;
@@ -82,22 +91,12 @@ public final class OptikpiInAppController {
     final String apiKey;
     final String baseUrl;
     final PopupSource source;
-    final ActivePopup.DeepLinkHandler onDeepLink;
-    final ActivePopup.CustomActionHandler onCustomAction;
     final List<String> blockedRoutes;
 
-    Setup(
-        String apiKey,
-        String baseUrl,
-        PopupSource source,
-        ActivePopup.DeepLinkHandler onDeepLink,
-        ActivePopup.CustomActionHandler onCustomAction,
-        List<String> blockedRoutes) {
+    Setup(String apiKey, String baseUrl, PopupSource source, List<String> blockedRoutes) {
       this.apiKey = apiKey;
       this.baseUrl = baseUrl;
       this.source = source;
-      this.onDeepLink = onDeepLink;
-      this.onCustomAction = onCustomAction;
       this.blockedRoutes = Collections.unmodifiableList(new ArrayList<>(blockedRoutes));
     }
   }
@@ -108,22 +107,13 @@ public final class OptikpiInAppController {
     private List<InAppPopup> waiting = Collections.emptyList();
     private final Set<String> drawnIds = new HashSet<>();
     final PopupSource source;
-    final ActivePopup.DeepLinkHandler onDeepLink;
-    final ActivePopup.CustomActionHandler onCustomAction;
     final List<String> blockedRoutes;
     final FetchThrottle throttle = new FetchThrottle();
     boolean fetching;
 
-    Session(
-        PopupRequestContext context,
-        PopupSource source,
-        ActivePopup.DeepLinkHandler onDeepLink,
-        ActivePopup.CustomActionHandler onCustomAction,
-        List<String> blockedRoutes) {
+    Session(PopupRequestContext context, PopupSource source, List<String> blockedRoutes) {
       this.context = context;
       this.source = source;
-      this.onDeepLink = onDeepLink;
-      this.onCustomAction = onCustomAction;
       this.blockedRoutes = blockedRoutes;
     }
 
@@ -317,8 +307,8 @@ public final class OptikpiInAppController {
       ActivePopup.DeepLinkHandler onDeepLink,
       ActivePopup.CustomActionHandler onCustomAction,
       List<String> blockedRoutes) {
-    Setup newSetup =
-        new Setup(apiKey, baseUrl, source, onDeepLink, onCustomAction, blockedRoutes);
+    setHandlersOnMain(onDeepLink, onCustomAction);
+    Setup newSetup = new Setup(apiKey, baseUrl, source, blockedRoutes);
     PopupRequestContext context = contextFor(newSetup, playerToken);
     if (context == null) {
       InAppLog.log("player token unreadable: not fetching");
@@ -365,7 +355,7 @@ public final class OptikpiInAppController {
     if (existingContext == null
         || !existingContext.playerId.equals(context.playerId)
         || !existingContext.workspaceId.equals(context.workspaceId)) {
-      initOnMain(context, s.source, s.onDeepLink, s.onCustomAction, s.blockedRoutes);
+      initOnMain(context, s.source, deepLinkHandler, customActionHandler, s.blockedRoutes);
       return;
     }
     existing.replaceContext(context);
@@ -393,6 +383,7 @@ public final class OptikpiInAppController {
       ActivePopup.DeepLinkHandler onDeepLink,
       ActivePopup.CustomActionHandler onCustomAction,
       List<String> blockedRoutes) {
+    setHandlersOnMain(onDeepLink, onCustomAction);
     Session previous = session;
     PopupRequestContext previousContext = previous != null ? previous.getContext() : null;
     boolean switching =
@@ -402,20 +393,9 @@ public final class OptikpiInAppController {
     endSession(switching && previous != null && !previous.isPaused());
     Session newSession =
         new Session(
-            context,
-            source,
-            onDeepLink,
-            onCustomAction,
-            Collections.unmodifiableList(new ArrayList<>(blockedRoutes)));
+            context, source, Collections.unmodifiableList(new ArrayList<>(blockedRoutes)));
     session = newSession;
-    setup =
-        new Setup(
-            context.apiKey,
-            context.baseUrl,
-            source,
-            onDeepLink,
-            onCustomAction,
-            blockedRoutes);
+    setup = new Setup(context.apiKey, context.baseUrl, source, blockedRoutes);
     if (!context.workspaceId.equals(lastWorkspaceId) || !context.playerId.equals(lastPlayerId)) {
       shownThisVisit = false;
     }
@@ -444,6 +424,25 @@ public final class OptikpiInAppController {
     InAppLog.log("logout");
     endSession(session != null && !session.isPaused());
     setup = null;
+    // Let go of the handlers with the session: a lambda that captured an Activity must not keep it
+    // alive for as long as the process runs.
+    setHandlersOnMain(null, null);
+  }
+
+  /**
+   * Replaces the deep-link and custom-action handlers without touching the session. They are
+   * process-wide state, so a handler that captures an {@code Activity} must be replaced (or set to
+   * null) before that Activity is destroyed; see {@link OptikpiInApp#setHandlers}.
+   */
+  public void setHandlers(
+      ActivePopup.DeepLinkHandler onDeepLink, ActivePopup.CustomActionHandler onCustomAction) {
+    runOnMain(() -> setHandlersOnMain(onDeepLink, onCustomAction));
+  }
+
+  private void setHandlersOnMain(
+      ActivePopup.DeepLinkHandler onDeepLink, ActivePopup.CustomActionHandler onCustomAction) {
+    deepLinkHandler = onDeepLink;
+    customActionHandler = onCustomAction;
   }
 
   private void endSession(boolean flush) {
@@ -458,7 +457,7 @@ public final class OptikpiInAppController {
       setCurrent(null);
     }
     if (flush && s != null) {
-      workers.execute(() -> flushQuiet(s));
+      flusher.execute(() -> flushQuiet(s));
     }
   }
 
@@ -614,7 +613,7 @@ public final class OptikpiInAppController {
     // (see didDraw). One that is dropped before that, expired during the image wait or hidden by
     // a screen change, can then be tried again instead of being lost.
     InAppLog.log("show " + picked.id + " (" + picked.content.layout.name() + ") on " + route);
-    setCurrent(new ActivePopup(picked, s.getContext(), s.onDeepLink, s.onCustomAction, false));
+    setCurrent(new ActivePopup(picked, s.getContext(), false));
   }
 
   public void showTest(PopupContent content) {
@@ -631,13 +630,7 @@ public final class OptikpiInAppController {
             Instant.now(),
             null,
             content);
-    ActivePopup.DeepLinkHandler deepLink = session != null ? session.onDeepLink : null;
-    ActivePopup.CustomActionHandler custom = session != null ? session.onCustomAction : null;
-    if (setup != null) {
-      deepLink = deepLink != null ? deepLink : setup.onDeepLink;
-      custom = custom != null ? custom : setup.onCustomAction;
-    }
-    setCurrent(new ActivePopup(popup, null, deepLink, custom, true));
+    setCurrent(new ActivePopup(popup, null, true));
   }
 
   public void didDraw(ActivePopup active) {
@@ -746,13 +739,15 @@ public final class OptikpiInAppController {
     switch (action.type) {
       case dismiss -> {}
       case deeplink -> {
-        if (action.value != null && active.onDeepLink != null) {
-          active.onDeepLink.onDeepLink(action.value);
+        ActivePopup.DeepLinkHandler handler = deepLinkHandler;
+        if (action.value != null && handler != null) {
+          handler.onDeepLink(action.value);
         }
       }
       case custom -> {
-        if (action.customData != null && active.onCustomAction != null) {
-          active.onCustomAction.onCustomAction(action.customData);
+        ActivePopup.CustomActionHandler handler = customActionHandler;
+        if (action.customData != null && handler != null) {
+          handler.onCustomAction(action.customData);
         }
       }
       case url -> {
@@ -808,10 +803,10 @@ public final class OptikpiInAppController {
     if (s.isPaused() || !inForeground) {
       return;
     }
-    workers.execute(
+    flusher.execute(
         () -> {
-          // This task may have waited behind a fetch or an image load: the app can have gone to
-          // the background, the session ended, or an earlier request been refused since.
+          // This task may have waited behind another flush: the app can have gone to the
+          // background, the session ended, or an earlier request been refused since.
           if (session != s || !inForeground) {
             return;
           }

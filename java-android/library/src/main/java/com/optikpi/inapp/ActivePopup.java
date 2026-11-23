@@ -4,11 +4,13 @@ import com.optikpi.inapp.model.InAppPopup;
 import com.optikpi.inapp.model.PopupContent;
 import com.optikpi.inapp.source.PopupRequestContext;
 
+/**
+ * The pop-up on screen. The handlers an action calls are the controller's, not copies kept here, so
+ * they can be rebound while it is showing.
+ */
 public final class ActivePopup {
   public final InAppPopup popup;
   public final PopupRequestContext context;
-  public final DeepLinkHandler onDeepLink;
-  public final CustomActionHandler onCustomAction;
   public final boolean isTest;
 
   /** Set when the first frame is reported, so a second attached activity doesn't report it again. */
@@ -20,13 +22,9 @@ public final class ActivePopup {
   ActivePopup(
       InAppPopup popup,
       PopupRequestContext context,
-      DeepLinkHandler onDeepLink,
-      CustomActionHandler onCustomAction,
       boolean isTest) {
     this.popup = popup;
     this.context = context;
-    this.onDeepLink = onDeepLink;
-    this.onCustomAction = onCustomAction;
     this.isTest = isTest;
   }
 
