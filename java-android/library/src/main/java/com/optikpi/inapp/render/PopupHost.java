@@ -173,10 +173,15 @@ public final class PopupHost {
               if (current.isAlive()) {
                 current.removeOnPreDrawListener(this);
               }
-              // A suspended host is being cleared (its activity was paused, so it may be under a
-              // translucent one): a frame it still has queued must not count as an impression.
+              // The clearing of a stale view is only posted, so a frame can come first: a host that
+              // is suspended (its activity was paused, so it may be under a translucent one), or a
+              // pop-up that is no longer current (logout, another player, a blocked screen), must
+              // not be drawn, let alone counted. Take the view out and skip this frame.
+              if (!detached && (suspended || controller.getCurrent() != active)) {
+                overlay.removeView(view);
+                return false;
+              }
               if (!detached
-                  && !suspended
                   && view.getParent() == overlay
                   && view.isAttachedToWindow()
                   && view.isShown()

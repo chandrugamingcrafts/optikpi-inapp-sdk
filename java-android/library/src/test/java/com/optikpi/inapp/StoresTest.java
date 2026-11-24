@@ -167,4 +167,17 @@ public class StoresTest {
     assertTrue(new java.io.File(context.getNoBackupFilesDir(), ShownStore.KEY).isFile());
     assertTrue(new ShownStore(context).load().contains("old"));
   }
+
+  @Test
+  public void aRememberedIdIsSeenAtOnceButOnlyPersistedOnRequest() {
+    ShownStore store = new ShownStore(context);
+    store.remember("drawn", null);
+
+    assertTrue("the next pick must see it", store.load().contains("drawn"));
+    assertFalse(
+        "and storage is not touched yet", new ShownStore(context).load().contains("drawn"));
+
+    store.persist();
+    assertTrue(new ShownStore(context).load().contains("drawn"));
+  }
 }

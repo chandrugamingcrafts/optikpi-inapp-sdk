@@ -480,4 +480,51 @@ public class ControllerConcurrencyTest {
 
     assertNull("an expired popup must not reach the screen", controller.getCurrent());
   }
+
+  @Test
+  public void aCarriedPopupKeepsTheNewScreensVisitSpent() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    InAppPopup first = popup("carried-1");
+    InAppPopup second = popup("carried-2");
+    PopupSource source =
+        new PopupSource() {
+          @Override
+          public PopupFetchResult fetch(PopupRequestContext context) {
+            return new PopupFetchResult(List.of(first, second), 300);
+          }
+
+          @Override
+          public void sendEvents(PopupRequestContext context, List<PopupEvent> events) {}
+        };
+    OptikpiInApp.init(
+        activity,
+        "api-key",
+        jwt("ws", "player-carried", "t"),
+        "https://inapp.test",
+        null,
+        null,
+        Collections.emptyList(),
+        source);
+    drainAll(controller);
+    ActivePopup active = controller.getCurrent();
+    assertNotNull(active);
+    controller.didDraw(active);
+    drainAll(controller);
+
+    // The drawn pop-up is still up when the user moves to a screen that is not blocked.
+    controller.didChangeRoute("/screen-b");
+    drainAll(controller);
+    assertEquals(active, controller.getCurrent());
+
+    // Closing it, then leaving and returning to the app on that screen, must not bring a second.
+    controller.close(active, true);
+    drainAll(controller);
+    controller.setForeground(false);
+    drainAll(controller);
+    controller.setForeground(true);
+    drainAll(controller);
+    assertNull("one pop-up per screen visit", controller.getCurrent());
+  }
 }

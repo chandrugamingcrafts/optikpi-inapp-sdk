@@ -339,4 +339,45 @@ public class LifecycleTest {
 
     callbacks.onActivityStopped(under);
   }
+
+  @Test
+  public void aViewThatIsNoLongerCurrentIsNotDrawnInTheFrameThatFollows() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    new OptikpiLifecycleCallbacks(controller).adoptRunningActivity(activity);
+
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle();
+    ActivePopup active = controller.getCurrent();
+    PopupOverlayView view = findOverlay(activity);
+    assertNotNull(view);
+
+    // The pop-up goes away (logout, a blocked screen), but the host's clearing is only posted.
+    controller.close(active, false);
+    java.lang.reflect.Method dispatch =
+        android.view.ViewTreeObserver.class.getDeclaredMethod("dispatchOnPreDraw");
+    dispatch.setAccessible(true);
+    boolean cancelled = (boolean) dispatch.invoke(view.getViewTreeObserver());
+
+    assertTrue("the stale frame is cancelled", cancelled);
+    assertEquals("and the view is out of the window", 0, overlays(activity));
+    PopupHost.detach(activity);
+  }
+
+  private static PopupOverlayView findOverlay(Activity activity) {
+    ViewGroup decor = (ViewGroup) activity.getWindow().getDecorView();
+    for (int i = 0; i < decor.getChildCount(); i++) {
+      View host = decor.getChildAt(i);
+      if (host instanceof ViewGroup) {
+        ViewGroup group = (ViewGroup) host;
+        for (int j = 0; j < group.getChildCount(); j++) {
+          if (group.getChildAt(j) instanceof PopupOverlayView) {
+            return (PopupOverlayView) group.getChildAt(j);
+          }
+        }
+      }
+    }
+    return null;
+  }
 }

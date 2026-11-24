@@ -38,6 +38,9 @@ public final class ShownStore {
   /** id to the epoch millis it expires at, or {@link #NEVER}. Insertion-ordered, oldest first. */
   private Map<String, Long> entries;
 
+  /** Remembered since the last write. */
+  private boolean dirty;
+
   private static final long NEVER = 0L;
 
   public ShownStore(Context context) {
@@ -88,29 +91,40 @@ public final class ShownStore {
   public synchronized Set<String> load() {
     Map<String, Long> map = entries();
     if (prune(map)) {
-      persist(map);
+      write(map);
     }
     return new LinkedHashSet<>(map.keySet());
   }
 
   /**
-   * Remembers {@code id}, drawn now. {@code expiresAt} is when the pop-up stops being valid, or
-   * null when it never does.
+   * Remembers {@code id}, drawn now, in memory only: {@link #load} sees it at once. {@link
+   * #persist} writes it to storage, and can run on another thread. {@code expiresAt} is when the
+   * pop-up stops being valid, or null when it never does.
    */
-  public synchronized void markShown(String id, Instant expiresAt) {
+  public synchronized void remember(String id, Instant expiresAt) {
     Map<String, Long> map = entries();
-    boolean pruned = prune(map);
-    if (map.containsKey(id)) {
-      if (pruned) {
-        persist(map);
-      }
-      return;
+    prune(map);
+    if (!map.containsKey(id)) {
+      map.put(id, expiresAt == null ? NEVER : Math.max(1L, expiresAt.toEpochMilli()));
     }
-    map.put(id, expiresAt == null ? NEVER : Math.max(1L, expiresAt.toEpochMilli()));
-    persist(map);
+    dirty = true;
   }
 
-  private void persist(Map<String, Long> map) {
+  /** Writes what {@link #remember} has added since the last write. */
+  public synchronized void persist() {
+    if (dirty) {
+      write(entries());
+      dirty = false;
+    }
+  }
+
+  /** {@link #remember} and {@link #persist} in one. */
+  public synchronized void markShown(String id, Instant expiresAt) {
+    remember(id, expiresAt);
+    persist();
+  }
+
+  private void write(Map<String, Long> map) {
     JSONArray array = new JSONArray();
     try {
       for (Map.Entry<String, Long> entry : map.entrySet()) {

@@ -547,7 +547,6 @@ public final class OptikpiInAppController {
     }
     route = newRoute;
     visit++;
-    shownThisVisit = false;
     InAppLog.log("route " + newRoute);
     ActivePopup active = current;
     Session s = session;
@@ -558,6 +557,10 @@ public final class OptikpiInAppController {
       InAppLog.log("hide " + active.popup.id + ": " + newRoute + " is blocked");
       setCurrent(null);
     }
+    // A pop-up already drawn that is still up (a banner or toast carried over to a screen that is
+    // not blocked) is this visit's pop-up too: closing it must not make room for a second one.
+    ActivePopup carried = current;
+    shownThisVisit = carried != null && !carried.isTest && carried.drawn;
     showMoment();
     fetchMoment();
   }
@@ -683,10 +686,13 @@ public final class OptikpiInAppController {
       InAppLog.log("test pop-up drawn (" + active.getContent().layout.name() + ")");
     } else {
       consume(active);
+      // In the set the next pick reads at once, so a session started a moment later (another
+      // route, another player and back) cannot choose it again; the file follows on its own thread.
+      shown.remember(active.popup.id, active.popup.expiresAt);
       storage.execute(
           () -> {
             try {
-              shown.markShown(active.popup.id, active.popup.expiresAt);
+              shown.persist();
             } catch (Exception e) {
               InAppLog.log("could not remember " + active.popup.id + ": " + e);
             }
