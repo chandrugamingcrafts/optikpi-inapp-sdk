@@ -96,14 +96,20 @@ public final class PopupOverlayView extends FrameLayout {
           Insets bars =
               effective.getInsets(
                   WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
+          // A banner or toast leaves the keyboard open, and the keyboard is not part of the system
+          // bars: lift a bottom card over it. A blocking pop-up closes the keyboard instead.
+          int bottom = bars.bottom;
+          if (!blocking) {
+            bottom = Math.max(bottom, effective.getInsets(WindowInsetsCompat.Type.ime()).bottom);
+          }
           if (bars.left != insetL
               || bars.top != insetT
               || bars.right != insetR
-              || bars.bottom != insetB) {
+              || bottom != insetB) {
             insetL = bars.left;
             insetT = bars.top;
             insetR = bars.right;
-            insetB = bars.bottom;
+            insetB = bottom;
             updateUsableSize();
             build();
           }

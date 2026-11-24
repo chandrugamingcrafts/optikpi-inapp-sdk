@@ -439,6 +439,24 @@ public final class OptikpiInAppController {
     runOnMain(() -> setHandlersOnMain(onDeepLink, onCustomAction));
   }
 
+  /**
+   * Clears a handler only if it is still the one given. An Activity that unbinds in {@code
+   * onDestroy} can be destroyed after the next one has already bound its own, and must not take
+   * that one down with it.
+   */
+  public void clearHandlers(
+      ActivePopup.DeepLinkHandler onDeepLink, ActivePopup.CustomActionHandler onCustomAction) {
+    runOnMain(
+        () -> {
+          if (onDeepLink != null && deepLinkHandler == onDeepLink) {
+            deepLinkHandler = null;
+          }
+          if (onCustomAction != null && customActionHandler == onCustomAction) {
+            customActionHandler = null;
+          }
+        });
+  }
+
   private void setHandlersOnMain(
       ActivePopup.DeepLinkHandler onDeepLink, ActivePopup.CustomActionHandler onCustomAction) {
     deepLinkHandler = onDeepLink;

@@ -309,4 +309,34 @@ public class LifecycleTest {
     callbacks.onActivityStarted(activity);
     assertEquals("app://fresh", controller.getRoute());
   }
+
+  @Test
+  public void onlyTheActivityInFrontDrawsThePopup() throws Exception {
+    ComponentActivity under = activityAt("app://under");
+    ComponentActivity front = activityAt("app://front");
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(under);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+
+    // A translucent activity starts over the first, which stays started but is paused.
+    callbacks.onActivityStarted(under);
+    callbacks.onActivityResumed(under);
+    callbacks.onActivityPaused(under);
+    callbacks.onActivityStarted(front);
+    callbacks.onActivityResumed(front);
+
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals("the covered activity draws nothing", 0, overlays(under));
+    assertEquals(1, overlays(front));
+
+    // The covering activity closes: the one under it is back in front and draws the popup.
+    callbacks.onActivityPaused(front);
+    callbacks.onActivityStopped(front);
+    callbacks.onActivityResumed(under);
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals(1, overlays(under));
+    assertEquals(0, overlays(front));
+
+    callbacks.onActivityStopped(under);
+  }
 }

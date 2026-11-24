@@ -14,6 +14,7 @@ import android.widget.FrameLayout;
 import androidx.activity.OnBackPressedCallback;
 import com.optikpi.inapp.ActivePopup;
 import com.optikpi.inapp.OptikpiInAppController;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -28,6 +29,15 @@ public final class PopupHost {
   }
 
   public static void attach(Activity activity, OptikpiInAppController controller) {
+    attach(activity, controller, false);
+  }
+
+  /**
+   * [suspended] starts the binding without drawing, for an activity that is not in front yet; it
+   * draws once {@link #setTop} names it.
+   */
+  public static void attach(
+      Activity activity, OptikpiInAppController controller, boolean suspended) {
     detach(activity);
     // The window's decor, not android.R.id.content: an ActionBar is a sibling of the content, and
     // a blocking pop-up has to cover its Up and menu controls too.
@@ -55,9 +65,31 @@ public final class PopupHost {
       componentActivity.getOnBackPressedDispatcher().addCallback(componentActivity, back);
     }
     HostBinding binding = new HostBinding(controller, root, overlay, back);
+    binding.suspended = suspended;
     BINDINGS.put(activity, binding);
     controller.addCurrentListener(binding.listener);
     binding.listener.onChanged(controller.getCurrent());
+  }
+
+  /**
+   * Draws pop-ups only in the activity in front. Call it with the resumed activity: every other
+   * attached one is suspended and clears its overlay, and this one picks the current pop-up up.
+   */
+  public static void setTop(Activity top) {
+    for (Map.Entry<Activity, HostBinding> entry : new ArrayList<>(BINDINGS.entrySet())) {
+      Activity activity = entry.getKey();
+      if (activity != null) {
+        entry.getValue().setSuspended(activity != top);
+      }
+    }
+  }
+
+  /** An activity that has been paused no longer shows the pop-up (it may be under a dialog). */
+  public static void suspend(Activity activity) {
+    HostBinding binding = BINDINGS.get(activity);
+    if (binding != null) {
+      binding.setSuspended(true);
+    }
   }
 
   public static void detach(Activity activity) {
@@ -86,6 +118,9 @@ public final class PopupHost {
 
     final Handler handler = new Handler(Looper.getMainLooper());
     volatile boolean detached;
+
+    /** Main thread. True while this activity is not the one in front. */
+    boolean suspended;
 
     /** The page's views and what their accessibility importance was before a blocking pop-up. */
     private final Map<View, Integer> hidden = new HashMap<>();
@@ -168,6 +203,76 @@ public final class PopupHost {
       }
     }
 
+    void setSuspended(boolean value) {
+      if (suspended == value) {
+        return;
+      }
+      suspended = value;
+      handler.post(() -> render(controller.getCurrent()));
+    }
+
+    /**
+     * Shows [shown] (or clears the overlay when it is null). A binding that is suspended, because
+     * its activity is not the one in front, shows nothing: a dialog-themed or translucent activity
+     * leaves the one under it started, and drawing the same pop-up in both would stack scrims and
+     * cards and let the covered one win the impression.
+     */
+    void render(ActivePopup shown) {
+      ActivePopup active = suspended ? null : shown;
+      if (detached) {
+        return;
+      }
+      overlay.removeAllViews();
+      boolean blocks =
+          active != null && PopupBlocksPage.blocksPage(active.getContent());
+      back.setEnabled(blocks);
+      // Banners and toasts leave the page usable, so it stays exposed for them.
+      if (blocks) {
+        hidePage();
+      } else {
+        restorePage();
+      }
+      if (active == null) {
+        return;
+      }
+      PopupOverlayView view =
+          new PopupOverlayView(
+              overlay.getContext(),
+              active.getContent(),
+              controller.getImages(),
+              new PopupOverlayView.Callbacks() {
+                @Override
+                public void onButton(int index) {
+                  controller.tapButton(active, index);
+                }
+
+                @Override
+                public void onImageTap() {
+                  controller.tapImage(active);
+                }
+
+                @Override
+                public void onClose() {
+                  controller.close(active, true);
+                }
+
+                @Override
+                public void onOutsideTap() {
+                  controller.close(active, true);
+                }
+              });
+      overlay.addView(
+          view,
+          new FrameLayout.LayoutParams(
+              FrameLayout.LayoutParams.MATCH_PARENT,
+              FrameLayout.LayoutParams.MATCH_PARENT));
+      if (blocks) {
+        view.requestFocus(); // keyboard focus belongs to the pop-up now
+      }
+      reportWhenDrawn(view, active);
+
+    }
+
     HostBinding(
         OptikpiInAppController controller,
         ViewGroup root,
@@ -177,63 +282,7 @@ public final class PopupHost {
       this.root = root;
       this.overlay = overlay;
       this.back = back;
-      this.listener =
-          active -> {
-            handler.post(
-                () -> {
-                  if (detached) {
-                    return;
-                  }
-                  overlay.removeAllViews();
-                  boolean blocks =
-                      active != null && PopupBlocksPage.blocksPage(active.getContent());
-                  back.setEnabled(blocks);
-                  // Banners and toasts leave the page usable, so it stays exposed for them.
-                  if (blocks) {
-                    hidePage();
-                  } else {
-                    restorePage();
-                  }
-                  if (active == null) {
-                    return;
-                  }
-                  PopupOverlayView view =
-                      new PopupOverlayView(
-                          overlay.getContext(),
-                          active.getContent(),
-                          controller.getImages(),
-                          new PopupOverlayView.Callbacks() {
-                            @Override
-                            public void onButton(int index) {
-                              controller.tapButton(active, index);
-                            }
-
-                            @Override
-                            public void onImageTap() {
-                              controller.tapImage(active);
-                            }
-
-                            @Override
-                            public void onClose() {
-                              controller.close(active, true);
-                            }
-
-                            @Override
-                            public void onOutsideTap() {
-                              controller.close(active, true);
-                            }
-                          });
-                  overlay.addView(
-                      view,
-                      new FrameLayout.LayoutParams(
-                          FrameLayout.LayoutParams.MATCH_PARENT,
-                          FrameLayout.LayoutParams.MATCH_PARENT));
-                  if (blocks) {
-                    view.requestFocus(); // keyboard focus belongs to the pop-up now
-                  }
-                  reportWhenDrawn(view, active);
-                });
-          };
+      this.listener = active -> handler.post(() -> render(active));
     }
   }
 }

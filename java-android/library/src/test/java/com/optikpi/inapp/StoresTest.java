@@ -132,4 +132,39 @@ public class StoresTest {
     assertNull(cache.get("big"));
     assertNotNull(cache.get("next"));
   }
+
+  @Test
+  public void deviceStateStaysOutOfBackupStorage() {
+    ShownStore store = new ShownStore(context);
+    store.markShown("a", null);
+    com.optikpi.inapp.events.EventQueue queue = new com.optikpi.inapp.events.EventQueue(context, 50);
+    queue.enqueue(
+        new com.optikpi.inapp.events.PopupEvent(
+            "trk", com.optikpi.inapp.events.PopupEventType.impression, java.time.Instant.now(), null),
+        "ws",
+        "p1");
+
+    java.io.File noBackup = context.getNoBackupFilesDir();
+    assertTrue(new java.io.File(noBackup, ShownStore.KEY).isFile());
+    assertTrue(new java.io.File(noBackup, com.optikpi.inapp.events.EventQueue.QUEUE_KEY).isFile());
+    assertTrue(new java.io.File(noBackup, com.optikpi.inapp.events.EventQueue.TRACKED_KEY).isFile());
+    // Nothing of it is in SharedPreferences, which Auto Backup would carry to another device.
+    android.content.SharedPreferences prefs =
+        context.getSharedPreferences("optikpi_inapp", Context.MODE_PRIVATE);
+    assertFalse(prefs.contains(ShownStore.KEY));
+    assertFalse(prefs.contains(com.optikpi.inapp.events.EventQueue.QUEUE_KEY));
+  }
+
+  @Test
+  public void aValueAnOlderVersionKeptInPreferencesMovesToNoBackupStorage() {
+    android.content.SharedPreferences prefs =
+        context.getSharedPreferences("optikpi_inapp", Context.MODE_PRIVATE);
+    prefs.edit().putString(ShownStore.KEY, "[\"old\"]").commit();
+
+    assertTrue(new ShownStore(context).load().contains("old"));
+
+    assertFalse("it is no longer in the backed-up file", prefs.contains(ShownStore.KEY));
+    assertTrue(new java.io.File(context.getNoBackupFilesDir(), ShownStore.KEY).isFile());
+    assertTrue(new ShownStore(context).load().contains("old"));
+  }
 }

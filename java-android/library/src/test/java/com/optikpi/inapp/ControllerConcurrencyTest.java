@@ -72,19 +72,26 @@ public class ControllerConcurrencyTest {
     return new InAppPopup(id, "trk-" + id, "cmp-" + id, Instant.now(), null, content);
   }
 
-  private static ExecutorService workerExecutor(OptikpiInAppController controller)
+  private static ExecutorService executor(OptikpiInAppController controller, String name)
       throws Exception {
-    Field f = OptikpiInAppController.class.getDeclaredField("workers");
+    Field f = OptikpiInAppController.class.getDeclaredField(name);
     f.setAccessible(true);
     return (ExecutorService) f.get(controller);
   }
 
+  /** Lets every background thread the controller owns (work, flush, storage) finish what it has. */
   private static void drainAll(OptikpiInAppController controller) throws Exception {
-    ExecutorService workers = workerExecutor(controller);
+    ExecutorService[] pools = {
+      executor(controller, "workers"),
+      executor(controller, "flusher"),
+      executor(controller, "storage")
+    };
     for (int i = 0; i < 5; i++) {
       shadowOf(Looper.getMainLooper()).idle();
-      Future<?> barrier = workers.submit(() -> {});
-      barrier.get(5, TimeUnit.SECONDS);
+      for (ExecutorService pool : pools) {
+        Future<?> barrier = pool.submit(() -> {});
+        barrier.get(5, TimeUnit.SECONDS);
+      }
       shadowOf(Looper.getMainLooper()).idle();
     }
   }
@@ -148,7 +155,7 @@ public class ControllerConcurrencyTest {
         source);
     awaitWithMainIdle(playerAFetched);
     // Wait for maybeShow on the worker thread to enqueue publish(sessionA, ...) onto main.
-    workerExecutor(controller).submit(() -> {}).get(5, TimeUnit.SECONDS);
+    executor(controller, "workers").submit(() -> {}).get(5, TimeUnit.SECONDS);
 
     // Background login callback switches to Player B while Player A's publish() is pending.
     Thread loginThread =

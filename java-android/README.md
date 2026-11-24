@@ -115,8 +115,10 @@ An `Activity` that is already on screen when `init` runs, as after a login, is p
 The handlers are held until `logout`, so do not let them capture an `Activity` (a lambda calling an instance
 method of your login screen would leak it across rotation and call into the destroyed instance). Route them
 through your application (a navigator, an event bus), or bind them from an `Activity` with
-`OptikpiInApp.setHandlers(context, onDeepLink, onCustomAction)` and clear them with
-`setHandlers(context, null, null)` in `onDestroy`.
+`OptikpiInApp.setHandlers(context, onDeepLink, onCustomAction)` and unbind them with
+`OptikpiInApp.clearHandlers(context, onDeepLink, onCustomAction)` (the same instances, kept in fields) in
+`onDestroy`: it only removes handlers that are still installed, so an `Activity` destroyed after the next
+one has bound its own does not take those down. `setHandlers(context, null, null)` clears unconditionally.
 
 `baseUrl` is required: your environment's API gateway, `https://{dev\|qa\|app}.optikpi.com/apigw`.
 

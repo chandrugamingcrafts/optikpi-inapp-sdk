@@ -1,8 +1,8 @@
 package com.optikpi.inapp.events;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import com.optikpi.inapp.InAppLog;
+import com.optikpi.inapp.logic.DeviceState;
 import com.optikpi.inapp.source.PopupHttpException;
 import com.optikpi.inapp.source.PopupRequestContext;
 import com.optikpi.inapp.source.PopupSource;
@@ -18,7 +18,8 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
- * Events wait here, in SharedPreferences, until the server takes them. Each {@code (trackingId,
+ * Events wait here, in no-backup device storage (see {@link DeviceState}), until the server takes
+ * them. Each {@code (trackingId,
  * type)} gets in once, so it is sent once, however often the app reports it.
  *
  * <p>Both lists are stored as ordered JSON arrays (a {@code StringSet} has no order), so when a cap
@@ -33,7 +34,7 @@ public final class EventQueue {
 
   public static final int MAX_TRACKED = 2000;
 
-  private final SharedPreferences prefs;
+  private final DeviceState state;
   private final int batchSize;
   /**
    * Held for a whole flush, network included, so flushes run one at a time. It is not the monitor
@@ -48,15 +49,14 @@ public final class EventQueue {
   private BooleanSupplier pendingEligible;
 
   public EventQueue(Context context, int batchSize) {
-    prefs =
-        context.getApplicationContext().getSharedPreferences("optikpi_inapp", Context.MODE_PRIVATE);
+    state = new DeviceState(context);
     this.batchSize = batchSize;
   }
 
   private List<String> readList(String key) {
     List<String> out = new ArrayList<>();
     try {
-      String raw = prefs.getString(key, null);
+      String raw = state.read(key);
       if (raw == null) {
         return out;
       }
@@ -106,11 +106,10 @@ public final class EventQueue {
         oldest.remove();
       }
     }
-    prefs
-        .edit()
-        .putString(QUEUE_KEY, encode(queue))
-        .putString(TRACKED_KEY, encode(new ArrayList<>(tracked)))
-        .apply();
+    // The queue first: if the process dies between the two writes, the event is at worst queued
+    // twice after a restart, never lost.
+    state.write(QUEUE_KEY, encode(queue));
+    state.write(TRACKED_KEY, encode(new ArrayList<>(tracked)));
     InAppLog.log("queued " + event.type.name() + " " + event.trackingId);
     return true;
   }
@@ -227,7 +226,7 @@ public final class EventQueue {
         // Re-read: events were queued while the request was out.
         List<String> remaining = readList(QUEUE_KEY);
         remaining.removeAll(sent);
-        prefs.edit().putString(QUEUE_KEY, encode(remaining)).apply();
+        state.write(QUEUE_KEY, encode(remaining));
       }
     }
   }

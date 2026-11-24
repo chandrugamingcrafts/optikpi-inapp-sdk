@@ -1,7 +1,6 @@
 package com.optikpi.inapp.logic;
 
 import android.content.Context;
-import android.content.SharedPreferences;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -33,7 +32,7 @@ public final class ShownStore {
   /** How long past its expiry an id is kept, to ride out a device clock that is set far ahead. */
   public static final long EXPIRY_GRACE_MS = 30L * 24 * 60 * 60 * 1000;
 
-  private final SharedPreferences prefs;
+  private final DeviceState state;
   private final LongSupplier clock;
 
   /** id to the epoch millis it expires at, or {@link #NEVER}. Insertion-ordered, oldest first. */
@@ -47,8 +46,7 @@ public final class ShownStore {
 
   /** For tests, which need to move the clock. */
   public ShownStore(Context context, LongSupplier clock) {
-    prefs =
-        context.getApplicationContext().getSharedPreferences("optikpi_inapp", Context.MODE_PRIVATE);
+    state = new DeviceState(context);
     this.clock = clock;
   }
 
@@ -56,7 +54,7 @@ public final class ShownStore {
     if (entries == null) {
       Map<String, Long> read = new LinkedHashMap<>();
       try {
-        String raw = prefs.getString(KEY, null);
+        String raw = state.read(KEY);
         if (raw != null) {
           JSONArray array = new JSONArray(raw);
           for (int i = 0; i < array.length(); i++) {
@@ -125,6 +123,6 @@ public final class ShownStore {
     } catch (JSONException e) {
       return;
     }
-    prefs.edit().putString(KEY, array.toString()).apply();
+    state.write(KEY, array.toString());
   }
 }

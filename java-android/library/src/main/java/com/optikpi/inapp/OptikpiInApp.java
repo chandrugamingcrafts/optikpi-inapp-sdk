@@ -98,13 +98,27 @@ public final class OptikpiInApp {
    * the session. The SDK holds them for the life of the process (until {@link #logout}), so a
    * handler that captures an {@code Activity} leaks it across rotation and calls into the
    * destroyed instance. Pass handlers that go through your application (a navigator, an event
-   * bus), or bind them from an Activity and call this with {@code null} in {@code onDestroy}.
+   * bus), or bind them from an Activity and unbind them with {@link #clearHandlers} in {@code
+   * onDestroy}. Passing {@code null} here clears unconditionally.
    */
   public static void setHandlers(
       Context context,
       ActivePopup.DeepLinkHandler onDeepLink,
       ActivePopup.CustomActionHandler onCustomAction) {
     OptikpiInAppController.getInstance(context).setHandlers(onDeepLink, onCustomAction);
+  }
+
+  /**
+   * Unbinds the handlers you gave {@link #setHandlers}, but only those still installed: Android
+   * can destroy one Activity after the next has bound its own, and a plain {@code setHandlers(null,
+   * null)} would remove the live ones. Pass the same instances you installed (keep them in fields:
+   * a method reference such as {@code this::open} is a new object each time it is written).
+   */
+  public static void clearHandlers(
+      Context context,
+      ActivePopup.DeepLinkHandler onDeepLink,
+      ActivePopup.CustomActionHandler onCustomAction) {
+    OptikpiInAppController.getInstance(context).clearHandlers(onDeepLink, onCustomAction);
   }
 
   public static void setPlayerToken(Context context, String playerToken) {

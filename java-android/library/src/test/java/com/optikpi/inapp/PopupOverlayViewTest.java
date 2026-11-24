@@ -269,4 +269,36 @@ public class PopupOverlayViewTest {
     assertTrue("toast sits on the right", card.getLeft() > 800 / 2);
     assertTrue("topRight close is on the right", close.getLeft() > card.getWidth() / 2);
   }
+
+  private static WindowInsets keyboard(int bottom) {
+    return new WindowInsets.Builder()
+        .setInsets(WindowInsets.Type.ime(), android.graphics.Insets.of(0, 0, 0, bottom))
+        .build();
+  }
+
+  @Test
+  @Config(sdk = 34, qualifiers = "w800dp-h480dp")
+  public void aBottomBannerStaysAboveTheKeyboardAndAModalDoesNotMove() throws Exception {
+    JSONObject json =
+        new JSONObject()
+            .put("version", 1)
+            .put("layout", "banner")
+            .put("size", "md")
+            .put("position", "bottom")
+            .put("title", "Hello");
+    PopupOverlayView banner =
+        new PopupOverlayView(context, PopupContent.tryParse(json), null, NO_OP);
+    banner.dispatchApplyWindowInsets(keyboard(200));
+    banner.measure(
+        View.MeasureSpec.makeMeasureSpec(800, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(480, View.MeasureSpec.EXACTLY));
+    banner.layout(0, 0, 800, 480);
+    View card = banner.getChildAt(banner.getChildCount() - 1);
+    assertTrue("banner is above the keyboard", card.getBottom() <= 480 - 200);
+
+    // A blocking pop-up closes the keyboard, so it does not make room for it.
+    PopupOverlayView modal = laidOut("modal", "md", 800, 480, keyboard(200));
+    View sheet = modal.getChildAt(modal.getChildCount() - 1);
+    assertEquals(480 / 2, (sheet.getTop() + sheet.getBottom()) / 2, 1);
+  }
 }

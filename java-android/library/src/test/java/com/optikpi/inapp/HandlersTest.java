@@ -105,4 +105,27 @@ public class HandlersTest {
     shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(6));
     assertNull(controller.getCurrent());
   }
+
+  @Test
+  public void anActivityDestroyedAfterTheNextBoundItsOwnHandlersLeavesThemInPlace() throws Exception {
+    List<String> a = new ArrayList<>();
+    List<String> b = new ArrayList<>();
+    ActivePopup.DeepLinkHandler handlerA = a::add;
+    ActivePopup.DeepLinkHandler handlerB = b::add;
+
+    controller.setHandlers(handlerA, null); // activity A resumes
+    controller.setHandlers(handlerB, null); // activity B resumes before A is destroyed
+    controller.clearHandlers(handlerA, null); // A's onDestroy
+    shadowOf(Looper.getMainLooper()).idle();
+
+    tapFirstButton();
+    assertEquals(List.of(), a);
+    assertEquals("B's handler survived A's cleanup", List.of("app://cashier"), b);
+
+    // B's own cleanup does remove it.
+    controller.clearHandlers(handlerB, null);
+    shadowOf(Looper.getMainLooper()).idle();
+    tapFirstButton();
+    assertEquals(List.of("app://cashier"), b);
+  }
 }

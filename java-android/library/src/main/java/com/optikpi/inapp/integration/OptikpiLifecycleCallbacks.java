@@ -69,7 +69,9 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
       controller.setForeground(true);
     }
     if (!PopupHost.isAttached(activity)) {
-      PopupHost.attach(activity, controller);
+      // Drawn only once it is in front: an adopted activity that is started but not resumed sits
+      // under a translucent one.
+      PopupHost.attach(activity, controller, !isInFront(activity));
       String route = currentRoute(activity);
       markTop(activity);
       controller.didChangeRoute(route);
@@ -127,6 +129,17 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
         && decor.getWindowVisibility() == View.VISIBLE;
   }
 
+  /** Resumed, as far as it can be told: an activity with no lifecycle to ask counts as in front. */
+  private static boolean isInFront(Activity activity) {
+    if (activity instanceof LifecycleOwner) {
+      return ((LifecycleOwner) activity)
+          .getLifecycle()
+          .getCurrentState()
+          .isAtLeast(Lifecycle.State.RESUMED);
+    }
+    return true;
+  }
+
   private static String routeOf(Activity activity) {
     String data = activity.getIntent() != null ? activity.getIntent().getDataString() : null;
     return data != null ? data : "/" + activity.getClass().getSimpleName();
@@ -162,11 +175,16 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     // A dialog-themed or translucent activity closing leaves the one under it started, so it gets
     // no onStart: put its route back here, or the covering activity's route would stay in force.
     markTop(activity);
+    // Only the activity in front draws the pop-up: the one it covers stays started, and would
+    // draw the same pop-up under it.
+    PopupHost.setTop(activity);
     controller.didChangeRoute(currentRoute(activity));
   }
 
   @Override
-  public void onActivityPaused(Activity activity) {}
+  public synchronized void onActivityPaused(Activity activity) {
+    PopupHost.suspend(activity);
+  }
 
   @Override
   public synchronized void onActivityStopped(Activity activity) {
