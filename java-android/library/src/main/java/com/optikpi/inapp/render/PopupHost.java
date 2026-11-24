@@ -173,7 +173,10 @@ public final class PopupHost {
               if (current.isAlive()) {
                 current.removeOnPreDrawListener(this);
               }
+              // A suspended host is being cleared (its activity was paused, so it may be under a
+              // translucent one): a frame it still has queued must not count as an impression.
               if (!detached
+                  && !suspended
                   && view.getParent() == overlay
                   && view.isAttachedToWindow()
                   && view.isShown()

@@ -380,4 +380,104 @@ public class ControllerConcurrencyTest {
       drainAll(controller);
     }
   }
+
+  @Test
+  public void aPopupFetchedWhileTheAppIsAwayShowsWhenItComesBack() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    CountDownLatch fetchEntered = new CountDownLatch(1);
+    CountDownLatch release = new CountDownLatch(1);
+    InAppPopup waiting = popup("away-1");
+    PopupSource source =
+        new PopupSource() {
+          @Override
+          public PopupFetchResult fetch(PopupRequestContext context) {
+            fetchEntered.countDown();
+            try {
+              release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException ignored) {
+            }
+            return new PopupFetchResult(List.of(waiting), 300);
+          }
+
+          @Override
+          public void sendEvents(PopupRequestContext context, List<PopupEvent> events) {}
+        };
+
+    OptikpiInApp.init(
+        activity,
+        "api-key",
+        jwt("ws", "player-away", "t"),
+        "https://inapp.test",
+        null,
+        null,
+        Collections.emptyList(),
+        source);
+    awaitWithMainIdle(fetchEntered);
+
+    // The activity stops while the GET is in flight.
+    controller.setForeground(false);
+    shadowOf(Looper.getMainLooper()).idle();
+    release.countDown();
+    drainAll(controller);
+    assertNull("nothing is shown to an app that is away", controller.getCurrent());
+
+    controller.setForeground(true);
+    drainAll(controller);
+    assertNotNull("it is shown when the app returns", controller.getCurrent());
+    assertEquals(waiting.id, controller.getCurrent().popup.id);
+  }
+
+  @Test
+  public void aPopupThatExpiredWhileItsImageLoadedIsNotPublished() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    PopupSource empty =
+        new PopupSource() {
+          @Override
+          public PopupFetchResult fetch(PopupRequestContext context) {
+            return new PopupFetchResult(Collections.emptyList(), 300);
+          }
+
+          @Override
+          public void sendEvents(PopupRequestContext context, List<PopupEvent> events) {}
+        };
+    OptikpiInApp.init(
+        activity,
+        "api-key",
+        jwt("ws", "player-expiry", "t"),
+        "https://inapp.test",
+        null,
+        null,
+        Collections.emptyList(),
+        empty);
+    drainAll(controller);
+    assertNull(controller.getCurrent());
+
+    PopupContent content = popup("expired-1").content;
+    InAppPopup expired =
+        new InAppPopup(
+            "expired-1",
+            "trk-expired-1",
+            null,
+            Instant.now().minusSeconds(60),
+            Instant.now().minusSeconds(1),
+            content);
+    Field sessionField = OptikpiInAppController.class.getDeclaredField("session");
+    sessionField.setAccessible(true);
+    Field visitField = OptikpiInAppController.class.getDeclaredField("visit");
+    visitField.setAccessible(true);
+    Object session = sessionField.get(controller);
+    int visit = visitField.getInt(controller);
+    java.lang.reflect.Method publish =
+        OptikpiInAppController.class.getDeclaredMethod(
+            "publish", session.getClass(), InAppPopup.class, int.class);
+    publish.setAccessible(true);
+    publish.invoke(controller, session, expired, visit);
+    shadowOf(Looper.getMainLooper()).idle();
+
+    assertNull("an expired popup must not reach the screen", controller.getCurrent());
+  }
 }

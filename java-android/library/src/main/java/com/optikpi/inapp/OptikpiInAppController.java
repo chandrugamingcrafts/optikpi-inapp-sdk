@@ -277,6 +277,8 @@ public final class OptikpiInAppController {
       if (s != null) {
         flush(s);
         fetchMoment();
+        // A pop-up that arrived while the app was away was not shown: it is waiting for this.
+        showMoment();
       }
     }
   }
@@ -573,7 +575,9 @@ public final class OptikpiInAppController {
       pickAgain = true;
       return;
     }
-    if (session != s || shownThisVisit || current != null) {
+    // Not in the background: nothing could be seen, and an image request would be a network call
+    // for an app the user has left. setForeground(true) asks again when they return.
+    if (session != s || shownThisVisit || current != null || !inForeground) {
       return;
     }
     picking = true;
@@ -587,6 +591,7 @@ public final class OptikpiInAppController {
               s.getWaiting(), shownIds, route, s.blockedRoutes, Instant.now());
       // Only an image the selected layout and size will draw is worth waiting for.
       if (next != null
+          && inForeground
           && next.content.drawsImage()
           && !next.content.image.isGradient()) {
         images.awaitLoad(next.content.image.url, IMAGE_WAIT_MS);
@@ -607,7 +612,7 @@ public final class OptikpiInAppController {
       maybeShow(s);
       return;
     }
-    if (next == null || shownThisVisit || current != null) {
+    if (next == null || shownThisVisit || current != null || !inForeground) {
       return;
     }
     InAppPopup picked = next;
@@ -623,8 +628,15 @@ public final class OptikpiInAppController {
         || visit != pickedVisit
         || shownThisVisit
         || current != null
+        || !inForeground
         || ShowRules.isRouteBlocked(route, s.blockedRoutes)) {
       InAppLog.log("drop " + picked.id + ": the session or screen changed before it showed");
+      return;
+    }
+    if (picked.isExpiredAt(Instant.now())) {
+      // It ran out while its image was loading: not even one frame of it may be drawn.
+      InAppLog.log("drop " + picked.id + ": it expired before it could show");
+      showMoment(); // an older waiting pop-up may still have this visit
       return;
     }
     // Not consumed yet: the pop-up stays waiting, and the visit unspent, until it is really drawn
