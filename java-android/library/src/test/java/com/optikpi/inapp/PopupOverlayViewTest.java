@@ -301,4 +301,64 @@ public class PopupOverlayViewTest {
     View sheet = modal.getChildAt(modal.getChildCount() - 1);
     assertEquals(480 / 2, (sheet.getTop() + sheet.getBottom()) / 2, 1);
   }
+
+  @Test
+  @Config(sdk = 34, qualifiers = "w400dp-h300dp")
+  public void aLongToastScrollsAndKeepsItsActionReachable() throws Exception {
+    // Explicit line breaks: Robolectric does not wrap text by width, so this is what makes the body
+    // taller than the card is allowed to be.
+    StringBuilder longBody = new StringBuilder();
+    for (int i = 0; i < 80; i++) {
+      longBody.append("A line of toast text\n");
+    }
+    JSONObject json =
+        new JSONObject()
+            .put("version", 1)
+            .put("layout", "toast")
+            .put("size", "md")
+            .put("position", "bottomRight")
+            .put("title", "Hello")
+            .put("body", longBody.toString())
+            .put(
+                "buttons",
+                new JSONArray()
+                    .put(
+                        new JSONObject()
+                            .put("label", "Claim")
+                            .put("style", "primary")
+                            .put(
+                                "action",
+                                new JSONObject().put("type", "dismiss"))));
+    PopupOverlayView view =
+        new PopupOverlayView(context, PopupContent.tryParse(json), null, NO_OP);
+    view.measure(
+        View.MeasureSpec.makeMeasureSpec(400, View.MeasureSpec.EXACTLY),
+        View.MeasureSpec.makeMeasureSpec(300, View.MeasureSpec.EXACTLY));
+    view.layout(0, 0, 400, 300);
+
+    View card = view.getChildAt(view.getChildCount() - 1);
+    assertTrue("the card respects its cap", card.getHeight() <= 300 * 0.9 + 1);
+    android.widget.ScrollView scroll = findScroll(card);
+    assertNotNull("long content scrolls", scroll);
+    assertTrue(
+        "there is more content than fits, so the action is reached by scrolling",
+        scroll.getChildAt(0).getHeight() > scroll.getHeight());
+    assertNotNull("the action is in the scrolling content", findText(scroll, "Claim"));
+  }
+
+  private static android.widget.ScrollView findScroll(View root) {
+    if (root instanceof android.widget.ScrollView) {
+      return (android.widget.ScrollView) root;
+    }
+    if (root instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup) root;
+      for (int i = 0; i < group.getChildCount(); i++) {
+        android.widget.ScrollView found = findScroll(group.getChildAt(i));
+        if (found != null) {
+          return found;
+        }
+      }
+    }
+    return null;
+  }
 }

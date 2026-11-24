@@ -505,7 +505,11 @@ public final class PopupOverlayView extends FrameLayout {
       buttons.setPadding(0, dp(8), 0, 0);
       text.addView(buttons);
     }
-    row.addView(text, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
+    // The card is capped at 90% of the screen: a long body (a large font, a short landscape
+    // window) must scroll, not push the action off the card where it can't be reached.
+    ScrollView scroll = new ScrollView(getContext());
+    scroll.addView(text);
+    row.addView(scroll, new LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
     card.addView(row, new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT));
     addCloseButton(card, content.theme.isDarkBackground(), 0);
 

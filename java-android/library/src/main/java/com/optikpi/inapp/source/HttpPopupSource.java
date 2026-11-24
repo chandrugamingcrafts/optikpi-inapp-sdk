@@ -21,13 +21,24 @@ public final class HttpPopupSource extends PopupSource {
   private static final MediaType JSON = MediaType.get("application/json; charset=utf-8");
   private final OkHttpClient client;
 
+  /**
+   * The most a whole request may take. The connect, read and write timeouts bound single steps, so
+   * a server that keeps sending a trickle never trips them; and a request runs on the controller's
+   * one worker thread, where a stalled one would hold up every fetch and session after it.
+   */
+  static final long CALL_TIMEOUT_SEC = 30;
+
+  static OkHttpClient defaultClient() {
+    return new OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(15, TimeUnit.SECONDS)
+        .callTimeout(CALL_TIMEOUT_SEC, TimeUnit.SECONDS)
+        .build();
+  }
+
   public HttpPopupSource() {
-    client =
-        new OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
-            .writeTimeout(15, TimeUnit.SECONDS)
-            .build();
+    client = defaultClient();
   }
 
   public HttpPopupSource(OkHttpClient client) {
