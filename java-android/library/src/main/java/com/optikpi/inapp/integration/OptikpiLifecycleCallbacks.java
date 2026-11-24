@@ -40,6 +40,9 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
 
   private WeakReference<Activity> top = new WeakReference<>(null);
 
+  /** Plain activities whose adoption is waiting for their window. Weak, and a set. */
+  private final Set<Activity> awaitingWindow = Collections.newSetFromMap(new WeakHashMap<>());
+
   /**
    * Whether any activity has been seen. A cleared weak reference can't tell "never seen one" from
    * "the last one was collected", and only the first activity may inherit a route the app
@@ -58,6 +61,7 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
    */
   public synchronized void adoptRunningActivity(Activity activity) {
     if (!isOnScreen(activity)) {
+      retryWhenWindowAttaches(activity);
       // The app is in the background as far as we can tell: don't fetch or report until it returns.
       if (started.isEmpty()) {
         controller.setForeground(false);
@@ -132,6 +136,43 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     return decor.isAttachedToWindow()
         && decor.getVisibility() == View.VISIBLE
         && decor.getWindowVisibility() == View.VISIBLE;
+  }
+
+  /**
+   * A plain {@code Activity} (no lifecycle to ask) adopted from inside its first {@code onResume}
+   * has no window yet: the framework adds it after {@code onResume} returns, and the application's
+   * resume notification went out before these callbacks existed. Try again once the window is
+   * attached and has been made visible, or nothing would show until the next pause and resume.
+   */
+  private void retryWhenWindowAttaches(Activity activity) {
+    if (activity instanceof LifecycleOwner
+        || activity.isFinishing()
+        || activity.isDestroyed()
+        || !awaitingWindow.add(activity)) {
+      return;
+    }
+    View decor = activity.getWindow().getDecorView();
+    if (decor.isAttachedToWindow()) {
+      // Attached but not visible: a stopped activity. Its next start is seen by the callbacks.
+      awaitingWindow.remove(activity);
+      return;
+    }
+    decor.addOnAttachStateChangeListener(
+        new View.OnAttachStateChangeListener() {
+          @Override
+          public void onViewAttachedToWindow(View view) {
+            view.removeOnAttachStateChangeListener(this);
+            // The window's visibility is set later in the same traversal.
+            view.post(
+                () -> {
+                  awaitingWindow.remove(activity);
+                  adoptRunningActivity(activity);
+                });
+          }
+
+          @Override
+          public void onViewDetachedFromWindow(View view) {}
+        });
   }
 
   /**

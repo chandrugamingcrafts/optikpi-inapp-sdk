@@ -492,4 +492,52 @@ public class LifecycleTest {
     assertEquals("and a campaign shows", 1, overlays(activity));
     callbacks.onActivityStopped(activity);
   }
+
+  @Test
+  public void aPlainActivityAdoptedInsideItsFirstResumeIsTakenInOnceItsWindowShows()
+      throws Exception {
+    // No lifecycle to ask, and the window is only added after onResume returns.
+    ActivityController<Activity> built =
+        Robolectric.buildActivity(Activity.class).create().start().resume();
+    Activity activity = built.get();
+    View decor = activity.getWindow().getDecorView();
+    // Robolectric leaves the window's visibility GONE; on a device it is VISIBLE from the first
+    // traversal on. Set it as the window attaches, ahead of the SDK's own listener.
+    decor.addOnAttachStateChangeListener(
+        new View.OnAttachStateChangeListener() {
+          @Override
+          public void onViewAttachedToWindow(View view) {
+            try {
+              java.lang.reflect.Field attachInfoField = View.class.getDeclaredField("mAttachInfo");
+              attachInfoField.setAccessible(true);
+              Object attachInfo = attachInfoField.get(view);
+              java.lang.reflect.Field windowVisibility =
+                  attachInfo.getClass().getDeclaredField("mWindowVisibility");
+              windowVisibility.setAccessible(true);
+              windowVisibility.setInt(attachInfo, View.VISIBLE);
+            } catch (ReflectiveOperationException e) {
+              throw new AssertionError(e);
+            }
+          }
+
+          @Override
+          public void onViewDetachedFromWindow(View view) {}
+        });
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+
+    callbacks.adoptRunningActivity(activity);
+    assertFalse("no window yet", PopupHost.isAttached(activity));
+    // Adopting again meanwhile must not stack a second wait.
+    callbacks.adoptRunningActivity(activity);
+
+    built.visible();
+    shadowOf(Looper.getMainLooper()).idle();
+
+    assertTrue("hosted once its window is up", PopupHost.isAttached(activity));
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals(1, overlays(activity));
+    callbacks.onActivityStopped(activity);
+  }
 }
