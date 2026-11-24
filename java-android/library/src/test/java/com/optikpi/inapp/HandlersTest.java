@@ -2,6 +2,7 @@ package com.optikpi.inapp;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.assertNull;
 import static org.robolectric.Shadows.shadowOf;
 
 import android.os.Looper;
@@ -81,5 +82,27 @@ public class HandlersTest {
     tapFirstButton();
 
     assertEquals(List.of(), calls);
+  }
+
+  @Test
+  public void aTestPreviewWithAutoDismissClosesItself() throws Exception {
+    PopupContent toast =
+        PopupContent.tryParse(
+            new JSONObject()
+                .put("version", 1)
+                .put("layout", "toast")
+                .put("title", "Hello")
+                .put("autoDismissSec", 5));
+    controller.showTest(toast);
+    shadowOf(Looper.getMainLooper()).idle();
+    ActivePopup active = controller.getCurrent();
+    assertNotNull(active);
+
+    controller.didDraw(active);
+    shadowOf(Looper.getMainLooper()).idle();
+    assertNotNull("still up before the time is out", controller.getCurrent());
+
+    shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofSeconds(6));
+    assertNull(controller.getCurrent());
   }
 }

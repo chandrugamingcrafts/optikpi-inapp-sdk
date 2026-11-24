@@ -118,9 +118,18 @@ public class StoresTest {
   }
 
   @Test
-  public void aBitmapBiggerThanTheWholeBudgetIsNotKept() {
-    BoundedBitmapCache cache = new BoundedBitmapCache(8, 1_000);
-    cache.put("big", Bitmap.createBitmap(100, 100, Bitmap.Config.ARGB_8888));
-    assertEquals(0, cache.size());
+  public void aBitmapBiggerThanTheWholeBudgetIsKeptAloneUntilTheNextOne() {
+    BoundedBitmapCache cache = new BoundedBitmapCache(8, 50_000);
+    cache.put("small", Bitmap.createBitmap(50, 50, Bitmap.Config.ARGB_8888));
+    // 40,000 + 40,000 bytes would fit two; this one is over the 50,000 budget by itself.
+    cache.put("big", Bitmap.createBitmap(200, 200, Bitmap.Config.ARGB_8888));
+    // It was loaded to be drawn: the renderer must find it, not download it again.
+    assertNotNull(cache.get("big"));
+    assertEquals(1, cache.size());
+
+    // The next image takes its place, and the budget holds again.
+    cache.put("next", Bitmap.createBitmap(50, 50, Bitmap.Config.ARGB_8888));
+    assertNull(cache.get("big"));
+    assertNotNull(cache.get("next"));
   }
 }

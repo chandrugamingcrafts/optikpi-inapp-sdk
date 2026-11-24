@@ -8,7 +8,9 @@ import java.util.Map;
 /**
  * A small least-recently-used cache of decoded images. Each pop-up is shown once per device, so a
  * big cache would rarely be hit again; the bound keeps a long-lived process from holding every
- * campaign image it ever drew (the Flutter package keeps eight, so does this).
+ * campaign image it ever drew (the Flutter package keeps eight, so does this). An image that is
+ * over the byte budget by itself is the exception: it is kept as the only entry until the next
+ * image arrives, so a preloaded creative is still there when the pop-up draws it.
  */
 public final class BoundedBitmapCache {
   public static final int DEFAULT_MAX_ENTRIES = 8;
@@ -45,7 +47,13 @@ public final class BoundedBitmapCache {
     }
     long size = bitmap.getAllocationByteCount();
     if (size > maxBytes) {
-      return; // Too big to keep: the caller still has it for this one draw.
+      // Over the budget on its own, but it was loaded to be drawn: refusing it would send the
+      // renderer to download and decode the same image again. It is kept alone, so memory goes
+      // past the budget by this one image, and only until the next image is stored.
+      entries.clear();
+      entries.put(url, bitmap);
+      bytes = size;
+      return;
     }
     entries.put(url, bitmap);
     bytes += size;

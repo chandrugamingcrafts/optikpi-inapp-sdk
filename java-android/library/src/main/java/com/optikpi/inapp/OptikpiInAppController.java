@@ -649,19 +649,20 @@ public final class OptikpiInAppController {
     }
     active.drawn = true;
     if (active.isTest) {
+      // Nothing is remembered or reported for a preview, but it times out like the real thing.
       InAppLog.log("test pop-up drawn (" + active.getContent().layout.name() + ")");
-      return;
+    } else {
+      consume(active);
+      storage.execute(
+          () -> {
+            try {
+              shown.markShown(active.popup.id, active.popup.expiresAt);
+            } catch (Exception e) {
+              InAppLog.log("could not remember " + active.popup.id + ": " + e);
+            }
+          });
+      track(active, PopupEventType.impression, null);
     }
-    consume(active);
-    storage.execute(
-        () -> {
-          try {
-            shown.markShown(active.popup.id, active.popup.expiresAt);
-          } catch (Exception e) {
-            InAppLog.log("could not remember " + active.popup.id + ": " + e);
-          }
-        });
-    track(active, PopupEventType.impression, null);
     Integer autoDismiss = active.getContent().autoDismissSec;
     if (autoDismiss != null) {
       Runnable task = () -> closeOnMain(active, true);
