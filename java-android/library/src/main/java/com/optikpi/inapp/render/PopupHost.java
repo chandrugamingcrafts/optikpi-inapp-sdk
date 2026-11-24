@@ -101,6 +101,7 @@ public final class PopupHost {
     // Work already queued for this binding must not run against a root it has left.
     binding.detached = true;
     binding.handler.removeCallbacksAndMessages(null);
+    binding.clearPendingPreDraw();
     binding.restorePage();
     ViewGroup parent = (ViewGroup) binding.overlay.getParent();
     if (parent != null) {
@@ -158,39 +159,76 @@ public final class PopupHost {
       }
     }
 
+    /** The one pre-draw listener waiting for the pop-up view's first frame, and that view. */
+    private ViewTreeObserver.OnPreDrawListener pendingPreDraw;
+
+    private View pendingView;
+
+    /**
+     * Takes the pending listener off every observer it can be on. A listener added while the view
+     * was attached lives on the window's observer; once the view is removed, {@code
+     * view.getViewTreeObserver()} is a detached one that never held it, so the overlay's and the
+     * root's observers (the window's) are cleared too. Removing from one that does not hold it is
+     * a no-op.
+     */
+    private void clearPendingPreDraw() {
+      ViewTreeObserver.OnPreDrawListener listener = pendingPreDraw;
+      View view = pendingView;
+      pendingPreDraw = null;
+      pendingView = null;
+      if (listener == null) {
+        return;
+      }
+      ViewTreeObserver[] observers = {
+        view != null ? view.getViewTreeObserver() : null,
+        overlay.getViewTreeObserver(),
+        root.getViewTreeObserver()
+      };
+      for (ViewTreeObserver observer : observers) {
+        if (observer != null && observer.isAlive()) {
+          observer.removeOnPreDrawListener(listener);
+        }
+      }
+    }
+
     /**
      * An impression is a pop-up the player could see: wait for a frame that is really about to be
      * drawn, and only count it if this overlay is still attached and its window visible. A post
      * would also run for an activity that stopped a moment after the pop-up was added.
      */
     private void reportWhenDrawn(PopupOverlayView view, ActivePopup active) {
-      ViewTreeObserver observer = view.getViewTreeObserver();
-      observer.addOnPreDrawListener(
+      clearPendingPreDraw();
+      ViewTreeObserver.OnPreDrawListener listener =
           new ViewTreeObserver.OnPreDrawListener() {
             @Override
             public boolean onPreDraw() {
-              ViewTreeObserver current = view.getViewTreeObserver();
-              if (current.isAlive()) {
-                current.removeOnPreDrawListener(this);
+              // One frame only, whatever happens below: a listener left registered could keep
+              // cancelling traversals (and freeze the activity) once its view is gone.
+              if (pendingPreDraw == this) {
+                clearPendingPreDraw();
               }
-              // The clearing of a stale view is only posted, so a frame can come first: a host that
-              // is suspended (its activity was paused, so it may be under a translucent one), or a
-              // pop-up that is no longer current (logout, another player, a blocked screen), must
-              // not be drawn, let alone counted. Take the view out and skip this frame.
-              if (!detached && (suspended || controller.getCurrent() != active)) {
+              if (detached || view.getParent() != overlay) {
+                return true; // the view was already taken out; nothing to cancel
+              }
+              // The clearing of a stale view is only posted, so a frame can come first: a host
+              // that is suspended (its activity was paused, so it may be under a translucent
+              // one), or a pop-up that is no longer current (logout, another player, a blocked
+              // screen), must not be drawn, let alone counted. Take the view out and skip it.
+              if (suspended || controller.getCurrent() != active) {
                 overlay.removeView(view);
                 return false;
               }
-              if (!detached
-                  && view.getParent() == overlay
-                  && view.isAttachedToWindow()
+              if (view.isAttachedToWindow()
                   && view.isShown()
                   && view.getWindowVisibility() == View.VISIBLE) {
                 controller.didDraw(active);
               }
               return true;
             }
-          });
+          };
+      pendingPreDraw = listener;
+      pendingView = view;
+      view.getViewTreeObserver().addOnPreDrawListener(listener);
     }
 
     void restorePage() {
@@ -230,6 +268,7 @@ public final class PopupHost {
       if (detached) {
         return;
       }
+      clearPendingPreDraw();
       overlay.removeAllViews();
       boolean blocks =
           active != null && PopupBlocksPage.blocksPage(active.getContent());

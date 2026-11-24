@@ -380,4 +380,33 @@ public class LifecycleTest {
     }
     return null;
   }
+
+  @Test
+  public void aRemovedPopupLeavesNoPreDrawListenerBehindToFreezeTheWindow() throws Exception {
+    // Visible, so the decor is attached and its observer is the window's live one.
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().visible().get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    new OptikpiLifecycleCallbacks(controller).adoptRunningActivity(activity);
+
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle(); // rendered, first frame not drawn yet
+    ActivePopup active = controller.getCurrent();
+    assertEquals(1, overlays(activity));
+
+    // Removed before its first frame (a logout, a replacement, a blocked screen).
+    controller.close(active, false);
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals(0, overlays(activity));
+
+    java.lang.reflect.Method dispatch =
+        android.view.ViewTreeObserver.class.getDeclaredMethod("dispatchOnPreDraw");
+    dispatch.setAccessible(true);
+    View decor = activity.getWindow().getDecorView();
+    for (int frame = 0; frame < 3; frame++) {
+      boolean cancelled = (boolean) dispatch.invoke(decor.getViewTreeObserver());
+      assertFalse("frame " + frame + " must not be cancelled by a leftover listener", cancelled);
+    }
+    PopupHost.detach(activity);
+  }
 }
