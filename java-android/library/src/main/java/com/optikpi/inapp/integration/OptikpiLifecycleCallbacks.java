@@ -5,6 +5,7 @@ import android.app.Application;
 import android.os.Bundle;
 import android.view.View;
 import androidx.lifecycle.Lifecycle;
+import androidx.lifecycle.LifecycleEventObserver;
 import androidx.lifecycle.LifecycleOwner;
 import com.optikpi.inapp.OptikpiInAppController;
 import com.optikpi.inapp.render.PopupHost;
@@ -71,7 +72,11 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     if (!PopupHost.isAttached(activity)) {
       // Drawn only once it is in front: an adopted activity that is started but not resumed sits
       // under a translucent one.
-      PopupHost.attach(activity, controller, !isInFront(activity));
+      boolean inFront = isInFront(activity);
+      PopupHost.attach(activity, controller, !inFront);
+      if (!inFront) {
+        showWhenResumed(activity);
+      }
       String route = currentRoute(activity);
       markTop(activity);
       controller.didChangeRoute(route);
@@ -127,6 +132,31 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
     return decor.isAttachedToWindow()
         && decor.getVisibility() == View.VISIBLE
         && decor.getWindowVisibility() == View.VISIBLE;
+  }
+
+  /**
+   * An activity adopted from inside its own {@code onResume} (the first {@code init}, with no
+   * earlier {@code install}) still reads as started: the lifecycle reaches RESUMED only after that
+   * method returns, and the application-level resume notification came before these callbacks
+   * existed. Nothing would then lift the suspension, so wait for the lifecycle's own resume.
+   */
+  private static void showWhenResumed(Activity activity) {
+    if (!(activity instanceof LifecycleOwner)) {
+      return;
+    }
+    Lifecycle lifecycle = ((LifecycleOwner) activity).getLifecycle();
+    lifecycle.addObserver(
+        new LifecycleEventObserver() {
+          @Override
+          public void onStateChanged(LifecycleOwner source, Lifecycle.Event event) {
+            if (event == Lifecycle.Event.ON_RESUME) {
+              PopupHost.setTop(activity);
+            }
+            if (event == Lifecycle.Event.ON_RESUME || event == Lifecycle.Event.ON_DESTROY) {
+              lifecycle.removeObserver(this);
+            }
+          }
+        });
   }
 
   /** Resumed, as far as it can be told: an activity with no lifecycle to ask counts as in front. */

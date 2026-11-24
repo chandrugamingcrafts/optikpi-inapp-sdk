@@ -409,4 +409,66 @@ public class LifecycleTest {
     }
     PopupHost.detach(activity);
   }
+
+  /** Runs a hidden ViewTreeObserver dispatch, as the framework does for a traversal. */
+  private static boolean dispatch(android.view.ViewTreeObserver observer, String method)
+      throws Exception {
+    java.lang.reflect.Method m =
+        android.view.ViewTreeObserver.class.getDeclaredMethod(method);
+    m.setAccessible(true);
+    Object result = m.invoke(observer);
+    return result instanceof Boolean && (Boolean) result;
+  }
+
+  @Test
+  public void aFrameThatIsCancelledDoesNotCountAsAnImpression() throws Exception {
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().start().resume().visible().get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    new OptikpiLifecycleCallbacks(controller).adoptRunningActivity(activity);
+    View decor = activity.getWindow().getDecorView();
+
+    // Another listener, like a splash screen's keep-on-screen condition, cancels the frame.
+    android.view.ViewTreeObserver.OnPreDrawListener splash = () -> false;
+    decor.getViewTreeObserver().addOnPreDrawListener(splash);
+
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle();
+    ActivePopup active = controller.getCurrent();
+    assertNotNull(active);
+
+    boolean cancelled = dispatch(decor.getViewTreeObserver(), "dispatchOnPreDraw");
+    shadowOf(Looper.getMainLooper()).idle();
+    assertTrue("the splash listener cancelled the frame", cancelled);
+    assertFalse("nothing was drawn, so nothing is counted", active.drawn);
+
+    // The splash goes; the next frame is drawn, and that is the impression.
+    decor.getViewTreeObserver().removeOnPreDrawListener(splash);
+    assertFalse(dispatch(decor.getViewTreeObserver(), "dispatchOnPreDraw"));
+    dispatch(decor.getViewTreeObserver(), "dispatchOnDraw");
+    shadowOf(Looper.getMainLooper()).idle();
+    assertTrue("a frame that was drawn counts", active.drawn);
+    PopupHost.detach(activity);
+  }
+
+  @Test
+  public void anActivityAdoptedBeforeItsResumeCompletesShowsWhenTheLifecycleResumes()
+      throws Exception {
+    // init called from inside onResume: the lifecycle still reads STARTED, and the application's
+    // resume callback went out before the SDK's callbacks were registered.
+    org.robolectric.android.controller.ActivityController<ComponentActivity> started =
+        Robolectric.buildActivity(ComponentActivity.class).create().start();
+    ComponentActivity activity = started.get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    new OptikpiLifecycleCallbacks(controller).adoptRunningActivity(activity);
+
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals("not shown while it is only started", 0, overlays(activity));
+
+    started.resume();
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals("shown once the lifecycle resumes", 1, overlays(activity));
+    PopupHost.detach(activity);
+  }
 }
