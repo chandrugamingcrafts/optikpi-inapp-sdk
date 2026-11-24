@@ -189,6 +189,10 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
 
   @Override
   public synchronized void onActivityStarted(Activity activity) {
+    start(activity);
+  }
+
+  private void start(Activity activity) {
     boolean wasForeground = !started.isEmpty();
     started.add(activity);
     if (!wasForeground) {
@@ -202,6 +206,13 @@ public final class OptikpiLifecycleCallbacks implements Application.ActivityLife
 
   @Override
   public synchronized void onActivityResumed(Activity activity) {
+    // An activity adopted from inside its own onStart (the first init, with no earlier install)
+    // was rejected as not yet started: the lifecycle only reaches STARTED after onStart returns,
+    // and the application's start notification went out before these callbacks existed. Its
+    // resume is the first thing seen, so take it in as a start here.
+    if (!started.contains(activity) && !activity.isFinishing() && !activity.isDestroyed()) {
+      start(activity);
+    }
     // A dialog-themed or translucent activity closing leaves the one under it started, so it gets
     // no onStart: put its route back here, or the covering activity's route would stay in force.
     markTop(activity);

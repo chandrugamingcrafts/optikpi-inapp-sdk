@@ -471,4 +471,25 @@ public class LifecycleTest {
     assertEquals("shown once the lifecycle resumes", 1, overlays(activity));
     PopupHost.detach(activity);
   }
+
+  @Test
+  public void anActivityAdoptedInsideItsOwnOnStartIsTakenInWhenItResumes() throws Exception {
+    // init called from inside onStart: the lifecycle still reads CREATED, so adoption is refused,
+    // and the application's start callback went out before the SDK's callbacks were registered.
+    ComponentActivity activity =
+        Robolectric.buildActivity(ComponentActivity.class).create().get();
+    OptikpiInAppController controller = OptikpiInAppController.getInstance(activity);
+    OptikpiLifecycleCallbacks callbacks = new OptikpiLifecycleCallbacks(controller);
+    callbacks.adoptRunningActivity(activity);
+    assertFalse(PopupHost.isAttached(activity));
+
+    callbacks.onActivityResumed(activity);
+    shadowOf(Looper.getMainLooper()).idle();
+    assertTrue("hosted once it resumes", PopupHost.isAttached(activity));
+
+    controller.showTest(modal());
+    shadowOf(Looper.getMainLooper()).idle();
+    assertEquals("and a campaign shows", 1, overlays(activity));
+    callbacks.onActivityStopped(activity);
+  }
 }
